@@ -3,3 +3,4 @@ sources/*
 data/*
 ~lock.*
 .vscode/*
+.env
