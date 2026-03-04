@@ -6,6 +6,8 @@ volumes:
   postgres_data:
   kestra_storage:
   redpanda_data:
+  spark-logs:
+
 
 services:
   # Unique Database for application and Kestra metadata
@@ -18,10 +20,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     command: ["postgres", "-c", "wal_level=logical"]  # Debezium Requirement
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -d ${POSTGRES_DB} -U ${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -d ${KESTRA_DB_NAME} -U ${POSTGRES_USER}"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
     ports:
       - "${POSTGRES_PORT}:5432"
     volumes:
@@ -38,8 +41,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+        - .env
     environment:
       KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            driverClassName: org.postgresql.Driver
+            url: jdbc:postgresql://postgres:5432/kestra
+            username: ${POSTGRES_USER}
+            password: ${POSTGRES_PASSWORD}
         kestra:
           server:
             basicAuth:
@@ -52,12 +63,8 @@ services:
             type: local
             local:
               base-path: /app/storage
-          datasources:
-            postgres:
-              driverClassName: org.postgresql.Driver
-              url: jdbc:postgresql://postgres:5432/kestra_metadata
-              username: ${KESTRA_DB_USER}
-              password: ${KESTRA_DB_PASSWORD}
+          jooq:
+            enabled: true
     command: server standalone
     volumes:
       - kestra_storage:/app/storage
@@ -120,14 +127,23 @@ services:
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
+    depends_on:
+      postgres:
+        condition: service_healthy  
     volumes:
       - ./delta-lake:/opt/spark/data  # Delta Lake storage
+      - spark-logs:/opt/spark/logs
+
     ports:
-      - "8080:8080"  # Spark UI
+      - "8082:8080"  # Spark UI
       - "7077:7077"  # Master URL
     networks:
       - sport-pipeline
-    command: /opt/spark/sbin/start-master.sh
+    command: >
+      bash -c "
+        /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master 
+        --host spark-master --port 7077 --webui-port 8080
+      "
 
   # Spark Worker
   spark-worker:
@@ -143,9 +159,12 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
     depends_on:
-      - spark-master
+      spark-master:
+        condition: service_started  
     volumes:
       - ./delta-lake:/opt/spark/data
+      - spark-logs:/opt/spark/logs
+
     networks:
       - sport-pipeline
-    command: /opt/spark/sbin/start-worker.sh spark://spark-master:7077
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
