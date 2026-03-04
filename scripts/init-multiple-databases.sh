@@ -13,8 +13,8 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-'
   WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'rh_db')\gexec
   SELECT 'CREATE DATABASE activities_db' 
   WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'activities_db')\gexec
-  SELECT 'CREATE DATABASE kestra_metadata' 
-  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'kestra_metadata')\gexec
+  SELECT 'CREATE DATABASE kestra' 
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'kestra')\gexec
 EOSQL
 
 # Create RH employees table
