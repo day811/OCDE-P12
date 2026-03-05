@@ -1,0 +1,63 @@
+id: setup_and_ingest_pipeline
+namespace: null
+
+tasks:
+  # --- PHASE 1 : VALIDATION & CONFIGURATION ---
+  - id: wait_for_debezium
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type : io.kestra.plugin.scripts.runner.docker.Docker
+    commands:
+      - |
+        until curl -s http://debezium:8083/; do
+          echo "En attente de Debezium API..."
+          sleep 5
+        done
+
+  - id: register_cdc_connector
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://debezium:8083/connectors"
+    method: POST
+    contentType: application/json
+    body: |
+      {
+        "name": "postgres-connector",
+        "config": {
+          "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+          "database.hostname": "postgres",
+          "database.port": "5432",
+          "database.user": "{{ secret('POSTGRES_USER') }}",
+          "database.password": "{{ secret('POSTGRES_PASSWORD') }}",
+          "database.dbname": "{{ secret('POSTGRES_DB') }}",
+          "database.server.name": "postgres",
+          "table.include.list": "public.employees,public.activities",
+          "plugin.name": "pgoutput",
+          "topic.prefix": "cdc"
+        }
+      }
+
+  # --- PHASE 2 : DÉMARRAGE DU TRAITEMENT ---
+  # --- PHASE 2 : DÉMARRAGE DU TRAITEMENT ---
+  - id: start_spark_streaming
+    type: io.kestra.plugin.spark.SparkCLI
+    commands:
+      - spark-submit --master spark://spark-master:7077 --packages io.delta:delta-spark_2.12:3.2.0 /opt/spark-apps/process_streaming_data.py
+
+  # --- PHASE 3 : INGESTION DES DONNÉES (Seulement après Phase 1 & 2) ---
+  - id: ingest_hr_data
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    url: "jdbc:postgresql://postgres:5432/{{ secret('POSTGRES_DB') }}"
+    username: "{{ secret('POSTGRES_USER') }}"
+    password: "{{ secret('POSTGRES_PASSWORD') }}"
+    sql: |
+      COPY employees FROM '/tmp/Donnees_RH.csv' WITH (FORMAT csv, HEADER true);
+
+  - id: generate_sport_history
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type : io.kestra.plugin.scripts.runner.docker.Docker
+    beforeCommands:
+      - pip install Faker psycopg2-binary
+    script: |
+      # Import de votre script generate_history.py
+      # Le script insère dans PostgreSQL, ce qui déclenchera Debezium
