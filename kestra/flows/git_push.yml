@@ -1,0 +1,15 @@
+id: git_push
+namespace: null
+description: Save Flows to GIT
+
+tasks:
+
+  - id: git
+    type: io.kestra.plugin.git.PushFlows
+    description: Push flows to Git
+    url: https://github.com/day811/OCDE-P12
+    branch: dev
+    username: "{{ secret('GIT_ACCESS_USER') }}"
+    password: "{{ secret('GIT_ACCESS_TOKEN') }}"
+    sourceNamespace: company.team
+    gitDirectory: kestra/flows
