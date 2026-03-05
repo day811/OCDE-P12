@@ -39,8 +39,13 @@ services:
     container_name: kestra
     user: root
     depends_on:
-      postgres:
+      debezium:
         condition: service_healthy
+      spark-worker:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+      
     env_file:
         - .env
     environment:
@@ -86,6 +91,7 @@ services:
       - --memory 1G
       - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
       - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --set auto_create_topics_enabled=true
     ports:
       - "${REDPANDA_PORT}:19092"
     healthcheck:
@@ -112,6 +118,12 @@ services:
       STATUS_STORAGE_TOPIC: connect_statuses
       KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+    healthcheck:
+          test: ["CMD", "curl", "-f", "http://localhost:8083/connectors"]
+          interval: 10s
+          timeout: 5s
+          retries: 5
+          start_period: 30s # Laisse le temps au Java de démarrer
     ports:
       - "${DEBEZIUM_PORT}:8083"
     networks:
@@ -164,7 +176,11 @@ services:
     volumes:
       - ./delta-lake:/opt/spark/data
       - spark-logs:/opt/spark/logs
-
+    healthcheck:
+          test: ["CMD", "curl", "-f", "http://localhost:8081"]
+          interval: 10s
+          timeout: 5s
+          retries: 3
     networks:
       - sport-pipeline
     command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "spark://spark-master:7077"]
