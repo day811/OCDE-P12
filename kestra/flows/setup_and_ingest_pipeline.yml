@@ -1,22 +1,17 @@
+
 id: setup_and_ingest_pipeline
 namespace: null
 
 tasks:
-# --- PHASE 0 : ATTENTE INFRA ---
-  - id: wait_for_services
-    type: io.kestra.plugin.scripts.shell.Commands
-    taskRunner:
-      type : io.kestra.plugin.scripts.runner.docker.Docker
-    commands:
-      - |
-        until curl -s http://debezium:8083/; do echo "Wait Debezium..."; sleep 2; done
-        until curl -s http://redpanda:9644/v1/status/ready; do echo "Wait Redpanda..."; sleep 2; done  # --- PHASE 1 : VALIDATION & CONFIGURATION ---
 
 # --- PHASE 1 : REDPANDA INITIALISATION ---
   - id: init_redpanda_topics
     type: io.kestra.plugin.scripts.shell.Commands
     taskRunner:
       type: io.kestra.plugin.scripts.runner.docker.Docker
+      networkMode: "ocde-p12_sport-pipeline"
+    containerImage: docker.redpanda.com/redpandadata/redpanda:v23.3.9
+    
     commands:
       # Topics creation for CDC and Spark
       - rpk topic create cdc.public.employees --brokers redpanda:9092
@@ -54,6 +49,7 @@ tasks:
 
   # --- PHASE 4 : DATA INGESTION ---
   - id: ingest_hr_data
+    disabled: true
     type: io.kestra.plugin.jdbc.postgresql.Query
     url: "jdbc:postgresql://postgres:5432/{{ secret('POSTGRES_DB') }}"
     username: "{{ secret('POSTGRES_USER') }}"
@@ -63,6 +59,7 @@ tasks:
 
 # --- PHASE 5 : SPORT HISTORIC GENERATION ---
   - id: generate_sport_history
+    disabled: true
     type: io.kestra.plugin.scripts.python.Script
     taskRunner:
       type: io.kestra.plugin.scripts.runner.docker.Docker
