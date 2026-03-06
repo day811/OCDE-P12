@@ -1,6 +1,6 @@
 
-id: setup_and_ingest_pipeline
-namespace: null
+id: setup
+namespace: sds.infra
 
 tasks:
 
