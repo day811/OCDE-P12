@@ -1,0 +1,13 @@
+id: test
+namespace: null
+
+tasks:
+    # --- PHASE 3 : STARTING SPARK ---
+  - id: start_spark_streaming
+    type: io.kestra.plugin.spark.SparkCLI
+    containerImage: apache/spark:3.5.3  # On force l'image officielle ici
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      networkMode: "ocde-p12_sport-pipeline"
+    commands:
+      - spark-submit --master spark://spark-master:7077 --packages io.delta:delta-spark_2.12:3.2.0 /opt/spark-apps/process_streaming_data.py
