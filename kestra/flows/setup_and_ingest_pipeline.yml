@@ -17,7 +17,7 @@ tasks:
       - rpk topic create cdc.public.employees --brokers redpanda:9092
       - rpk topic create cdc.public.activities --brokers redpanda:9092
       - rpk topic create spark_checkpoints --brokers redpanda:9092
-
+    
   # --- PHASE 2 : DEBEZIUM INITIALISATION ---
   - id: register_cdc_connector
     type: io.kestra.plugin.core.http.Request
