@@ -1,5 +1,5 @@
 id: git_push
-namespace: null
+namespace: sds.infra
 description: Save Flows to GIT
 
 tasks:
@@ -12,4 +12,5 @@ tasks:
     username: "{{ secret('GIT_ACCESS_USER') }}"
     password: "{{ secret('GIT_ACCESS_TOKEN') }}"
     sourceNamespace: sds.infra
+    targetNamespace: sds.infra
     gitDirectory: kestra/flows
