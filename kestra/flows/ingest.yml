@@ -1,0 +1,27 @@
+id: ingest
+namespace: sds.infra
+
+tasks:
+  # --- PHASE 4 : DATA INGESTION ---
+  - id: ingest_hr_data
+    disabled: true
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    url: "jdbc:postgresql://postgres:5432/{{ secret('POSTGRES_DB') }}"
+    username: "{{ secret('POSTGRES_USER') }}"
+    password: "{{ secret('POSTGRES_PASSWORD') }}"
+    sql: |
+      COPY employees FROM '/tmp/Donnees_RH.csv' WITH (FORMAT csv, HEADER true);
+
+# --- PHASE 5 : SPORT HISTORIC GENERATION ---
+  - id: generate_sport_history
+    disabled: true
+    type: io.kestra.plugin.scripts.python.Script
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+    containerImage: python:3.11-slim
+    beforeCommands:
+      - pip install Faker psycopg2-binary
+    script: |
+      import psycopg2
+      from faker import Faker
+      #... Logique Python Faker pour insérer dans PostgreSQL...
