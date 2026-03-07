@@ -1,0 +1,12 @@
+id: error_handler
+namespace: sds.infra
+description: "Centralisation des alertes pour le namespace"
+
+tasks:
+  - id: slack_alert
+    type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+    url: "https://hooks.slack.com/services/XXXX/XXXX"
+    payload: |
+      {
+        "text": "❌ *Erreur sur le Flow : {{ flow.id }}* \n *Exécution :* {{ execution.id }} \n *Lien :* {{ link }}"
+      }
