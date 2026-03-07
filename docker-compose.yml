@@ -174,7 +174,7 @@ services:
       spark-master:
         condition: service_started  
     volumes:
-      - ./delta-lake:/opt/spark/data
+      - ./data/delta-lake:/opt/spark/data
       - spark-logs:/opt/spark/logs
     healthcheck:
           test: ["CMD", "curl", "-f", "http://localhost:8081"]
