@@ -73,6 +73,8 @@ services:
     command: server standalone
     volumes:
       - kestra_storage:/app/storage
+      - ./data/sources:/app/data/sources:ro
+      - ./kestra/scripts:/app/scripts
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
@@ -143,7 +145,7 @@ services:
       postgres:
         condition: service_healthy  
     volumes:
-      - ./delta-lake:/opt/spark/data  # Delta Lake storage
+      - ./data/delta-lake:/opt/spark/data  # Delta Lake storage
       - spark-logs:/opt/spark/logs
 
     ports:
