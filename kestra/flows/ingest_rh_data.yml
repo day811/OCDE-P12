@@ -2,12 +2,8 @@ id: ingest_rh_data
 namespace: sds.infra
 description: "Pipeline Ingestion RH avec Qualité"
 
-# Déclencheur automatique en cas d'erreur
-errors:
-  - id: alert_on_failure
-    type: io.kestra.plugin.core.flow.Subflow
-    flowId: error_handler
-    namespace: sds.infra
+variables:
+  sourceRH: /app/data/sources/Données+RH.xlsx
 
 tasks:
   - id: create_table
@@ -35,7 +31,7 @@ tasks:
     url: "jdbc:postgresql://postgres:5432/rh_db"
     username: "{{ secret('POSTGRES_USER') }}"
     password: "{{ secret('POSTGRES_PASSWORD') }}"
-    from: "{{ inputs.file }}"
+    from: "{{ vars.sourceRH }}"
     table: "employees"
     format: CSV
     header: true

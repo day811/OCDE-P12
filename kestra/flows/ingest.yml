@@ -1,27 +1,37 @@
 id: ingest
 namespace: sds.infra
+description: Full pipeline for ingesting HR data
+variables:
+  employees_data: /app/data/sources/
+  pg_cnx_str: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@{{ envs.SDS_DB}}:5432
+  ingest_script_path: /app/data/scripts/ingest_hr_sport.py
+
 
 tasks:
-  # --- PHASE 4 : DATA INGESTION ---
-  - id: ingest_hr_data
-    disabled: true
-    type: io.kestra.plugin.jdbc.postgresql.Query
-    url: "jdbc:postgresql://postgres:5432/{{ secret('POSTGRES_DB') }}"
-    username: "{{ secret('POSTGRES_USER') }}"
-    password: "{{ secret('POSTGRES_PASSWORD') }}"
-    sql: |
-      COPY employees FROM '/tmp/Donnees_RH.csv' WITH (FORMAT csv, HEADER true);
-
-# --- PHASE 5 : SPORT HISTORIC GENERATION ---
-  - id: generate_sport_history
-    disabled: true
-    type: io.kestra.plugin.scripts.python.Script
-    taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
-    containerImage: python:3.11-slim
-    beforeCommands:
-      - pip install Faker psycopg2-binary
-    script: |
-      import psycopg2
-      from faker import Faker
-      #... Logique Python Faker pour insérer dans PostgreSQL...
+  - id: prepare_workspace
+    type: io.kestra.plugin.core.flow.WorkingDirectory
+    tasks:
+      - id: ingestion_rh
+        type: io.kestra.plugin.scripts.python.Script
+        warningOnStdErr: false
+        beforeCommands:
+          - python -m venv venv
+          - .venv/bin/activate
+          - pip install pandas openpyxl sqlalchemy psycopg2-binary great-expectations
+        env:
+          DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}/rh_db"
+        script: |
+          from pipeline_script import ingest_hr_data
+          ingest_hr_data("{{ vars.employees_data}}")
+      - id: simulation_sportive
+        type: io.kestra.plugin.scripts.python.Script
+        warningOnStdErr: false
+        beforeCommands:
+          - python -m venv venv
+          - .venv/bin/activate
+          - pip install pandas sqlalchemy psycopg2-binary great-expectations faker
+        env:
+          DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}/activities_db"
+        script: |
+          from {{ vars.ingest_script_path }} import simulate_and_ingest_sports
+          simulate_and_ingest_sports(num_activities=5000)
