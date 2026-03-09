@@ -9,16 +9,14 @@ done
 
 # Create databases from sport_app_db (if not exists)
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-'EOSQL'
-  SELECT 'CREATE DATABASE rh_db' 
-  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'rh_db')\gexec
-  SELECT 'CREATE DATABASE activities_db' 
-  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'activities_db')\gexec
+  SELECT 'CREATE DATABASE sport_app_db' 
+  WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'sport_app_db')\gexec
   SELECT 'CREATE DATABASE kestra' 
   WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'kestra')\gexec
 EOSQL
 
 # Create RH employees table
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "rh_db" <<-'EOSQL'
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY,
     first_name VARCHAR(100),
@@ -26,12 +24,13 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "rh_db" <<-'EOSQL'
     salary DECIMAL(10,2),
     transport_mode VARCHAR(50),
     address TEXT,
-    business_unit VARCHAR(50)
+    business_unit VARCHAR(50),
+    sport_type VARCHAR(50),
   );
 EOSQL
 
 # Create sports activities table (no cross-DB FK constraint)
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "activities_db" <<-'EOSQL'
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS sports_activities (
     id SERIAL PRIMARY KEY,
     employee_id INTEGER,  -- Foreign key handled by Spark joins
