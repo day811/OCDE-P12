@@ -19,13 +19,16 @@ EOSQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY,
-    first_name VARCHAR(100),
     last_name VARCHAR(100),
+    first_name VARCHAR(100),
+    birthday date,
+    business_unit VARCHAR(50),
+    entry_date  date, 
     salary DECIMAL(10,2),
     transport_mode VARCHAR(50),
     address TEXT,
-    business_unit VARCHAR(50),
-    sport_type VARCHAR(50),
+    distance_kms DECIMAL(10,1),
+    sport_type VARCHAR(50)
   );
 EOSQL
 
@@ -43,3 +46,4 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'
 EOSQL
 
 echo "✅ Databases and tables initialized successfully"
+
