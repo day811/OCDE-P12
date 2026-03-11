@@ -3,6 +3,7 @@ Faker==40.5.1          # Génération de données aléatoires (Profils, dates, t
 pandas==3.0.1           # Manipulation de DataFrames et import CSV
 python-dotenv==1.2.2    # Gestion des variables d'environnement (Secrets Slack, DB)
 openpyxl==3.1.5      # Gestion des fichiers XL
+fastparquet==2025.12.0
 
 # Base de données et Réseau ---
 psycopg2-binary==2.9.11  # Connecteur PostgreSQL pour l'injection des données simulées
