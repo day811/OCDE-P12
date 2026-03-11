@@ -1,3 +1,4 @@
+kestra==1.3.0
 # Simulation et Manipulation de données ---
 Faker==40.5.1          # Génération de données aléatoires (Profils, dates, textes)
 pandas==3.0.1           # Manipulation de DataFrames et import CSV
