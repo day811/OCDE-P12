@@ -2,36 +2,35 @@ id: ingest
 namespace: sds.infra
 description: Full pipeline for ingesting HR data
 variables:
-  employees_data: /app/data/sources/
+  employees_data: /app/data/sources/Données+RH.xlsx
   pg_cnx_str: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@{{ envs.SDS_DB}}:5432
-  ingest_script_path: /app/data/scripts/ingest_hr_sport.py
-
+  script_path: /app/scripts/
+  req_modules: "pandas openpyxl sqlalchemy fastparquet great-expectations geopy psycopg2-binary"
 
 tasks:
-  - id: prepare_workspace
-    type: io.kestra.plugin.core.flow.WorkingDirectory
-    tasks:
-      - id: ingestion_rh
-        type: io.kestra.plugin.scripts.python.Script
-        warningOnStdErr: false
-        beforeCommands:
-          - python -m venv venv
-          - .venv/bin/activate
-          - pip install pandas openpyxl sqlalchemy psycopg2-binary great-expectations
-        env:
-          DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}/rh_db"
-        script: |
-          from pipeline_script import ingest_hr_data
-          ingest_hr_data("{{ vars.employees_data}}")
-      - id: simulation_sportive
-        type: io.kestra.plugin.scripts.python.Script
-        warningOnStdErr: false
-        beforeCommands:
-          - python -m venv venv
-          - .venv/bin/activate
-          - pip install pandas sqlalchemy psycopg2-binary great-expectations faker
-        env:
-          DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}/activities_db"
-        script: |
-          from {{ vars.ingest_script_path }} import simulate_and_ingest_sports
-          simulate_and_ingest_sports(num_activities=5000)
+  - id: start
+    type: io.kestra.plugin.core.debug.Return
+    format: "\"{{ taskrun.startDate }}\""
+
+  - id: load_rh
+    type: io.kestra.plugin.scripts.python.Commands
+    description: "Load RH data from Excel with retry"
+    warningOnStdErr: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      maxDuration: PT5M
+      interval: PT15S
+    env:
+      DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+      PIP_ROOT_USER_ACTION: ignore
+    beforeCommands:
+      - pip install {{ vars.req_modules }}
+    commands:
+      # On ajoute le dossier au PYTHONPATH pour permettre l'import
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c "from ingest_hr import run_load; run_load('{{ vars.employees_data }}', 'rh_raw.parquet')"
+    outputFiles:
+      - "rh_raw.parquet"
