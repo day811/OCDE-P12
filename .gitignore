@@ -4,3 +4,5 @@ data/*
 ~lock.*
 .vscode/*
 .env
+kestra/tmp/*
+*kestra/scripts/__pycache__/*
