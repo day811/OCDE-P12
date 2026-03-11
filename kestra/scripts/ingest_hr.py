@@ -10,7 +10,8 @@ from pathlib import Path
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
-
+from kestra import Kestra
+            
 # --- Configuration du Logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("sds.infra.pipeline")
@@ -24,6 +25,7 @@ if not DATABASE_URL:
 
 engine = create_engine(DATABASE_URL)
 MAX_ROWS = None
+KESTRA_MODE = True
 
 
 # Initialisation du géocodage
@@ -75,29 +77,7 @@ transport_limits = {
 transport_names = list(transport_limits.keys())
 primed_transport = [MR,VT]
 
-def validate_dataframe(df, suite_name, expectations_list):
-    """
-    Fonction générique de validation Great Expectations.
-    Utilise le pattern WAP (Write-Audit-Publish) en mémoire.
-    """
-    context = gx.get_context()
-    
-    # Création d'une source de données Pandas éphémère pour GX
-    datasource = context.data_sources.add_pandas(name=f"ds_{suite_name}")
-    data_asset = datasource.add_dataframe_asset(name=f"asset_{suite_name}")
-    batch_definition = data_asset.add_batch_definition_whole_dataframe(f"batch_{suite_name}")
-    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
-    
-    # Création et configuration de la suite d'attentes
-    suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
-    
-    for expectation in expectations_list:
-        # Ajout dynamique des attentes selon la configuration fournie
-        # Exemple : exp_type = gx.expectations.ExpectColumnValuesToNotBeNull
-        suite.add_expectation(expectation)
-            
-    validation_result = batch.validate(suite)
-    return validation_result
+
 
 def get_distance(address):
     try:
@@ -130,6 +110,9 @@ def run_load(hr_file_path, output_file):
     try :
         df_rh = pd.read_excel(hr_file_path, names= hr_names, dtype= hr_mapping)
         df_rh.to_parquet(output_file)
+        if KESTRA_MODE:
+            Kestra.outputs({"succes": True})
+            Kestra.outputs({"dims": df_rh.shape})
     except Exception as e:
         print(f"Error during loading {hr_file_path}: {e}")
         return None
@@ -144,16 +127,14 @@ def run_etl(raw_file_parquet, output_file):
     df_rh = pd.read_parquet(raw_file_parquet)
     if MAX_ROWS:
         df_rh = df_rh.head(MAX_ROWS)
-    df_rh['distance_kms'] = 0
-    df_rh['delta_distance'] = 0
 
+    df_rh['distance_kms'] = 0.0
     mask = df_rh['transport_mode'].isin(primed_transport)
-    df_rh.loc[mask, 'distance_km'] = df_rh.loc[mask, 'address'].apply(get_distance)
+    df_rh.loc[mask, 'distance_kms'] = df_rh.loc[mask, 'address'].apply(get_distance)
 
-    df_rh['delta_distance'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
+    df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
+
     df_rh.to_parquet(output_file)
-
-
 
 
 def  run_check(processed_file_parquet):
@@ -173,7 +154,7 @@ def  run_check(processed_file_parquet):
         gx.expectations.ExpectColumnValuesToNotBeNull(column= "id"), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnValuesToBeUnique(column= "id"), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "transport_mode", value_set= transport_names), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'delta_distance', min_value= 0, max_value= None, strict_min=False), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeBetween(column = 'margin_kms', min_value= 0, max_value= None, strict_min=False), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnValuesToBeBetween(column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnValuesToBeBetween(column = 'birthday', min_value= min_date_birthday, max_value= max_date_birthday), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnValuesToBeBetween(column = 'entry_date', min_value= min_date_entry, max_value= max_date_entry), # pyright: ignore[reportPrivateImportUsage]
@@ -191,6 +172,30 @@ def  run_check(processed_file_parquet):
         raise ValueError("Qualité des données RH insuffisante.")
 
 
+def validate_dataframe(df, suite_name, expectations_list):
+    """
+    Fonction générique de validation Great Expectations.
+    Utilise le pattern WAP (Write-Audit-Publish) en mémoire.
+    """
+    context = gx.get_context()
+    
+    # Création d'une source de données Pandas éphémère pour GX
+    datasource = context.data_sources.add_pandas(name=f"ds_{suite_name}")
+    data_asset = datasource.add_dataframe_asset(name=f"asset_{suite_name}")
+    batch_definition = data_asset.add_batch_definition_whole_dataframe(f"batch_{suite_name}")
+    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
+    
+    # Création et configuration de la suite d'attentes
+    suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
+    
+    for expectation in expectations_list:
+        # Ajout dynamique des attentes selon la configuration fournie
+        # Exemple : exp_type = gx.expectations.ExpectColumnValuesToNotBeNull
+        suite.add_expectation(expectation)
+            
+    validation_result = batch.validate(suite)
+    return validation_result
+
 def run_save(processed_file_parquet):
     """
     Process file checking with GX.
@@ -198,7 +203,7 @@ def run_save(processed_file_parquet):
     logger.info(f"Start saving data to postgres  : {processed_file_parquet}")
 
     df_rh = pd.read_parquet(processed_file_parquet)
-    df_rh.drop(columns = 'delta_distance',inplace= True)
+    df_rh.drop(columns = 'margin_kms',inplace= True)
     df_rh.to_sql('employees', engine, if_exists='replace', index=False)
 
 
@@ -206,12 +211,13 @@ def run_save(processed_file_parquet):
 
 
 if __name__ == "__main__":
-    # Ce bloc sera ignoré par Kestra en passant directement par les fonctions
+    # KESTRA avoid this, calling directly functions
     import sys
     # Usage: python ingest_hr.py <action> <source> <destination>
     action = sys.argv[1]
     MAX_ROWS = 5
     BASE_DIR = Path(__file__).parent.parent.parent
+    KESTRA_MODE = False
 
     if action == "load":
         run_load(f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/kestra/tmp/rh_raw.parquet")
