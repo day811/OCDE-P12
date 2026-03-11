@@ -1,27 +1,36 @@
 id: ingest
 namespace: sds.infra
+description: Full pipeline for ingesting HR data
+variables:
+  employees_data: /app/data/sources/Données+RH.xlsx
+  pg_cnx_str: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@{{ envs.SDS_DB}}:5432
+  script_path: /app/scripts/
+  req_modules: "pandas openpyxl sqlalchemy fastparquet great-expectations geopy psycopg2-binary"
 
 tasks:
-  # --- PHASE 4 : DATA INGESTION ---
-  - id: ingest_hr_data
-    disabled: true
-    type: io.kestra.plugin.jdbc.postgresql.Query
-    url: "jdbc:postgresql://postgres:5432/{{ secret('POSTGRES_DB') }}"
-    username: "{{ secret('POSTGRES_USER') }}"
-    password: "{{ secret('POSTGRES_PASSWORD') }}"
-    sql: |
-      COPY employees FROM '/tmp/Donnees_RH.csv' WITH (FORMAT csv, HEADER true);
+  - id: start
+    type: io.kestra.plugin.core.debug.Return
+    format: "\"{{ taskrun.startDate }}\""
 
-# --- PHASE 5 : SPORT HISTORIC GENERATION ---
-  - id: generate_sport_history
-    disabled: true
-    type: io.kestra.plugin.scripts.python.Script
+  - id: load_rh
+    type: io.kestra.plugin.scripts.python.Commands
+    description: "Load RH data from Excel with retry"
+    warningOnStdErr: false
     taskRunner:
-      type: io.kestra.plugin.scripts.runner.docker.Docker
-    containerImage: python:3.11-slim
+      type: io.kestra.plugin.core.runner.Process
+    retry:
+      type: constant
+      maxAttempt: 3
+      maxDuration: PT5M
+      interval: PT15S
+    env:
+      DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+      PIP_ROOT_USER_ACTION: ignore
     beforeCommands:
-      - pip install Faker psycopg2-binary
-    script: |
-      import psycopg2
-      from faker import Faker
-      #... Logique Python Faker pour insérer dans PostgreSQL...
+      - pip install {{ vars.req_modules }}
+    commands:
+      # On ajoute le dossier au PYTHONPATH pour permettre l'import
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c "from ingest_hr import run_load; run_load('{{ vars.employees_data }}', 'rh_raw.parquet')"
+    outputFiles:
+      - "rh_raw.parquet"

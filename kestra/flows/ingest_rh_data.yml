@@ -2,19 +2,15 @@ id: ingest_rh_data
 namespace: sds.infra
 description: "Pipeline Ingestion RH avec Qualité"
 
-# Déclencheur automatique en cas d'erreur
-errors:
-  - id: alert_on_failure
-    type: io.kestra.plugin.core.flow.Subflow
-    flowId: error_handler
-    namespace: sds.infra
+variables:
+  sourceRH: /app/data/sources/Données+RH.xlsx
 
 tasks:
   - id: create_table
     type: io.kestra.plugin.jdbc.postgresql.Query
     url: "jdbc:postgresql://postgres:5432/rh_db"
-    username: "{{ env.POSTGRES_USER }}"
-    password: "{{ env.POSTGRES_PASSWORD }}"
+    username: "{{ secret('POSTGRES_USER') }}"
+    password: "{{ secret('POSTGRES_PASSWORD') }}"
     sql: |
       CREATE TABLE IF NOT EXISTS employees (
           id_salarie INT PRIMARY KEY,
@@ -33,9 +29,9 @@ tasks:
   - id: upload_csv
     type: io.kestra.plugin.jdbc.postgresql.CopyIn
     url: "jdbc:postgresql://postgres:5432/rh_db"
-    username: "{{ env.POSTGRES_USER }}"
-    password: "{{ env.POSTGRES_PASSWORD }}"
-    from: "{{ inputs.file }}"
+    username: "{{ secret('POSTGRES_USER') }}"
+    password: "{{ secret('POSTGRES_PASSWORD') }}"
+    from: "{{ vars.sourceRH }}"
     table: "employees"
     format: CSV
     header: true
@@ -60,7 +56,7 @@ tasks:
         context = gx.get_context()
         datasource = context.sources.add_postgres(
             name="my_postgres", 
-            connection_string="postgresql://{{env.POSTGRES_USER}}:{{env.POSTGRES_PASSWORD}}@postgres:5432/rh_db"
+            connection_string="postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/rh_db"
         )
         asset = datasource.add_table_asset(name="employees_table", table_name="employees")
         

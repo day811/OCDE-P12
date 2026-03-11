@@ -2,11 +2,20 @@ id: error_handler
 namespace: sds.infra
 description: "Centralisation des alertes pour le namespace"
 
+triggers:
+  - id: on_failure
+    type: io.kestra.plugin.core.trigger.Flow
+    conditions:
+      - type: io.kestra.plugin.core.condition.ExecutionStatus
+        in: 
+          - FAILED
+      - type: io.kestra.plugin.core.condition.ExecutionNamespace
+        namespace: sds.infra
+        prefix: true
+    disabled: true
+    
 tasks:
-  - id: slack_alert
+  - id: notify_slack
     type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
-    url: "https://hooks.slack.com/services/XXXX/XXXX"
-    payload: |
-      {
-        "text": "❌ *Erreur sur le Flow : {{ flow.id }}* \n *Exécution :* {{ execution.id }} \n *Lien :* {{ link }}"
-      }
+    url: "TON_WEBHOOK_URL"
+    payload: "Erreur détectée sur le flow {{ flow.id }}. Vérifiez Great Expectations !"
