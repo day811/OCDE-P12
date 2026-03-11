@@ -35,7 +35,9 @@ services:
 
   # Kestra with PostgreSQL persistency
   kestra:
-    image: kestra/kestra:latest-full
+    build:
+      context: .
+      dockerfile: kestra/Dockerfile  
     container_name: kestra
     user: root
     depends_on:
