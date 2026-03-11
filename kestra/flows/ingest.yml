@@ -1,36 +1,192 @@
 id: ingest
 namespace: sds.infra
-description: Full pipeline for ingesting HR data
+description: Full pipeline for ingesting HR and sport data
 variables:
   employees_data: /app/data/sources/Données+RH.xlsx
+  employees_sport: /app/data/sources/Données+Sportive.xlsx
+  json_sports_file: /app/data/sources/strava_sports.json
   pg_cnx_str: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@{{ envs.SDS_DB}}:5432
   script_path: /app/scripts/
-  req_modules: "pandas openpyxl sqlalchemy fastparquet great-expectations geopy psycopg2-binary"
 
 tasks:
   - id: start
     type: io.kestra.plugin.core.debug.Return
     format: "\"{{ taskrun.startDate }}\""
 
-  - id: load_rh
-    type: io.kestra.plugin.scripts.python.Commands
-    description: "Load RH data from Excel with retry"
-    warningOnStdErr: false
-    taskRunner:
-      type: io.kestra.plugin.core.runner.Process
-    retry:
-      type: constant
-      maxAttempt: 3
-      maxDuration: PT5M
-      interval: PT15S
-    env:
-      DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
-      PIP_ROOT_USER_ACTION: ignore
-    beforeCommands:
-      - pip install {{ vars.req_modules }}
-    commands:
-      # On ajoute le dossier au PYTHONPATH pour permettre l'import
-      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c "from ingest_hr import run_load; run_load('{{ vars.employees_data }}', 'rh_raw.parquet')"
-    outputFiles:
-      - "rh_raw.parquet"
+  - id: et_hr_sport_files
+    type: io.kestra.plugin.core.flow.Parallel
+    description: ET Files in parallel
+    tasks:
+      - id: et_hr
+        type: io.kestra.plugin.core.flow.Sequential
+        description: "ERP extract → transform  validate"
+
+        tasks:
+
+        - id: extract_hr
+          type: io.kestra.plugin.scripts.python.Commands
+          description: "Load RH data from Excel with retry"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_data }}', 'rh_raw.parquet')"
+          outputFiles:
+            - "rh_raw.parquet"
+
+        - id: transform_hr
+          type: io.kestra.plugin.scripts.python.Commands
+          description: " RH data treatment"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import transform_hr; transform_hr("rh_raw.parquet", 'rh_processed.parquet')"
+          outputFiles:
+            - "rh_processed.parquet"
+
+        - id: validate_hr
+          type: io.kestra.plugin.scripts.python.Commands
+          description: " Sport data validation"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import validate_hr; validate_hr("rh_processed.parquet", {{ vars.json_sports_file}})"
+
+      - id: et_sport
+        type: io.kestra.plugin.core.flow.Sequential
+        description: "ERP extract → clean → dedup → validate"
+
+        tasks:
+
+        - id: extract_sport
+          type: io.kestra.plugin.scripts.python.Commands
+          description: "Load Sport data from Excel with retry"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+            PIP_ROOT_USER_ACTION: ignore
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_sport }}', 'sport_raw.parquet', {{ vars.json_sports_file}})"
+          outputFiles:
+            - "sport_raw.parquet"
+
+        - id: transform_sport
+          type: io.kestra.plugin.scripts.python.Commands
+          description: " Sport data transform"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import transform_sport; transform_sport("sport_raw.parquet", 'sport_processed.parquet')"
+          outputFiles:
+            - "sport_processed.parquet"
+
+        - id: validate_sport
+          type: io.kestra.plugin.scripts.python.Commands
+          description: " Sport data validation"
+          warningOnStdErr: false
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT5M
+            interval: PT15S
+          env:
+            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+          commands:
+            # On ajoute le dossier au PYTHONPATH pour permettre l'import
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c "from ingest_hr import validate_sport; validate_sport("sport_processed.parquet", {{ vars.json_sports_file}})"
+
+  - id: duration_calc
+    type: io.kestra.plugin.scripts.python.Script
+    description: Execution time calculation
+
+    script: |
+      fin = "{{ taskrun.startDate }}"
+
+      from datetime import datetime
+      from kestra import Kestra
+
+      deb = {{ outputs.start.value }}
+      print(f"deb : {deb}") 
+      print(f"fin : {fin}")       
+
+      dt_deb = datetime.fromisoformat(deb.replace("Z", "+00:00"))
+      dt_fin = datetime.fromisoformat(fin.replace("Z", "+00:00"))
+
+      delta = dt_fin - dt_deb
+      print(delta)          
+      print(delta.total_seconds())  
+      Kestra.outputs( { 'total_time' : delta.total_seconds(), 'start' : str(dt_deb)})
+
+  - id: log_final
+    type: io.kestra.plugin.core.log.Log
+    description: Final Log
+    message: |+
+      -
+      ════════════════════════════════════════════════════════════
+      📊              PIPELINE EXECUTION COMPLETED
+      ════════════════════════════════════════════════════════════
+      📅 Start time     :  {{ outputs.duration_calc.vars.start }}  
+      ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
+
+      📊 xlsx load rows : {{ outputs.extract_hr["vars"]["dims"][0] }}  
+      📊 xlsx load cols : {{ outputs.extract_hr["vars"]["dims"][1] }}  
+    
+      💰 Final table :  
+
+      📂 Output files:  
+
+      ✅ All validations passed
+      ✅ All exports completed
+      ════════════════════════════════════════════════════════════
+
