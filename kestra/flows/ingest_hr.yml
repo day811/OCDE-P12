@@ -1,4 +1,4 @@
-id: ingest
+id: ingest_hr
 namespace: sds.infra
 description: Full pipeline for ingesting HR and sport data
 variables:
