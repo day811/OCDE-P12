@@ -13,7 +13,7 @@ tasks:
     type: io.kestra.plugin.core.debug.Return
     format: "\"{{ taskrun.startDate }}\""
 
-  - id: et_hr_sport_files
+  - id: hr_sport_files
     type: io.kestra.plugin.core.flow.Parallel
     description: ET Files in parallel
     tasks:
@@ -34,14 +34,12 @@ tasks:
             maxAttempt: 3
             maxDuration: PT5M
             interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_data }}', 'rh_raw.parquet')"
+            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('hr','{{ vars.employees_data }}', 'hr_raw.parquet')"
           outputFiles:
-            - "rh_raw.parquet"
+            - "hr_raw.parquet"
 
         - id: transform_hr
           type: io.kestra.plugin.scripts.python.Commands
@@ -49,19 +47,12 @@ tasks:
           warningOnStdErr: false
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
-          retry:
-            type: constant
-            maxAttempt: 3
-            maxDuration: PT5M
-            interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import transform_hr; transform_hr("rh_raw.parquet", 'rh_processed.parquet')"
+            - python -c """from ingest_hr import transform_hr; transform_hr('{{ outputs.extract_hr.outputFiles["hr_raw.parquet"] }}', 'hr_processed.parquet')"""
           outputFiles:
-            - "rh_processed.parquet"
+            - "hr_processed.parquet"
 
         - id: validate_hr
           type: io.kestra.plugin.scripts.python.Commands
@@ -69,17 +60,10 @@ tasks:
           warningOnStdErr: false
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
-          retry:
-            type: constant
-            maxAttempt: 3
-            maxDuration: PT5M
-            interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import validate_hr; validate_hr("rh_processed.parquet", {{ vars.json_sports_file}})"
+            - python -c """from ingest_hr import validate_hr; validate_hr('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}')"""
 
       - id: et_sport
         type: io.kestra.plugin.core.flow.Sequential
@@ -98,13 +82,11 @@ tasks:
             maxAttempt: 3
             maxDuration: PT5M
             interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
-            PIP_ROOT_USER_ACTION: ignore
+
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_sport }}', 'sport_raw.parquet', {{ vars.json_sports_file}})"
+            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_sport }}', 'sport_raw.parquet')"
           outputFiles:
             - "sport_raw.parquet"
 
@@ -114,17 +96,10 @@ tasks:
           warningOnStdErr: false
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
-          retry:
-            type: constant
-            maxAttempt: 3
-            maxDuration: PT5M
-            interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import transform_sport; transform_sport("sport_raw.parquet", 'sport_processed.parquet')"
+            - python -c """from ingest_hr import transform_sport; transform_sport('{{ outputs.extract_sport.outputFiles["sport_raw.parquet"] }}', 'sport_processed.parquet', '{{ vars.json_sports_file}}')"""
           outputFiles:
             - "sport_processed.parquet"
 
@@ -134,17 +109,47 @@ tasks:
           warningOnStdErr: false
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
-          retry:
-            type: constant
-            maxAttempt: 3
-            maxDuration: PT5M
-            interval: PT15S
-          env:
-            DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
           commands:
             # On ajoute le dossier au PYTHONPATH pour permettre l'import
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import validate_sport; validate_sport("sport_processed.parquet", {{ vars.json_sports_file}})"
+            - python -c """from ingest_hr import validate_sport; validate_sport('{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ vars.json_sports_file}}')"""
+
+  - id: merge_hr_sport
+    type: io.kestra.plugin.scripts.python.Commands
+    description: " RH data treatment"
+    warningOnStdErr: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      # On ajoute le dossier au PYTHONPATH pour permettre l'import
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c """from ingest_hr import merge_hr_sport; merge_hr_sport('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', 'merge.parquet')"""
+    outputFiles:
+      - "merge.parquet"
+
+  - id: validate_merge
+    type: io.kestra.plugin.scripts.python.Commands
+    description: " Sport data validation"
+    warningOnStdErr: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      # On ajoute le dossier au PYTHONPATH pour permettre l'import
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c """from ingest_hr import validate_merge; validate_merge('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
+
+  - id: merge_to_pg
+    type: io.kestra.plugin.scripts.python.Commands
+    description: " Sport data validation"
+    warningOnStdErr: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      DB_CONNECTION_STRING: "{{ vars.pg_cnx_str }}"
+    commands:
+      # On ajoute le dossier au PYTHONPATH pour permettre l'import
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c """from ingest_hr import load_pg; load_pg('{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
 
   - id: duration_calc
     type: io.kestra.plugin.scripts.python.Script
@@ -179,7 +184,8 @@ tasks:
       📅 Start time     :  {{ outputs.duration_calc.vars.start }}  
       ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
 
-      📊 xlsx load rows : {{ outputs.extract_hr["vars"]["dims"][0] }}  
+      📊 Employees xlsx loading : {{ outputs.extract_hr["vars"]["dims"][0] }}
+
       📊 xlsx load cols : {{ outputs.extract_hr["vars"]["dims"][1] }}  
     
       💰 Final table :  
