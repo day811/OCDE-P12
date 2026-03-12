@@ -27,6 +27,9 @@ engine = create_engine(DATABASE_URL)
 MAX_ROWS = None
 KESTRA_MODE = True
 
+FAILED = "Failed"
+WARNING = "Warning"
+SUCCESS = "Succes"
 
 # Initialisation du géocodage
 COMPANY_ADDR = "1362 Av. des Platanes, 34970 Lattes"
@@ -39,11 +42,11 @@ geocode_with_retry = RateLimiter(
     max_retries=3, 
     error_wait_seconds=2
 )
+GEO_DELAY = 1.5
+COMPANY_LOCATION = geolocator.geocode(COMPANY_ADDR)
+COMPANY_COORDS = (COMPANY_LOCATION.latitude, COMPANY_LOCATION.longitude) # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue]
 
-location_comp = geolocator.geocode(COMPANY_ADDR)
-coords_company = (location_comp.latitude, location_comp.longitude) # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue]
-
-hr_mapping = {
+HR_MAPPING = {
     'id' : np.int32 ,
     'last_name'  :object,
     'first_name' : object,
@@ -56,120 +59,87 @@ hr_mapping = {
     'address' : object,
     'transport_mode' : object,
 }
-sport_mapping = {
+SPORT_MAPPING = {
     'id' : np.int32,
-    'practiced_sport' : object
+    'sport_type' : object
 }
 
-hr_names = list(hr_mapping.keys())
+HR_COLUMNS = list(HR_MAPPING.keys())
+SPORT_COLUMNS = list(SPORT_MAPPING.keys())
+
 
 TC = 'Transports en commun'
 VM = 'véhicule thermique/électrique'
 MR = 'Marche/running'
 VT = 'Vélo/Trottinette/Autres' 
 
-transport_limits = {
+TRANSPORT_LIMIT = {
     TC : 0,
     VM : 0,
     MR : 15,
     VT : 25
 }
-transport_names = list(transport_limits.keys())
-primed_transport = [MR,VT]
+
+PRIMED_TRANSPORT = [MR,VT]
+# Global for scope
+SPORTS_LIST = []
+SPORT_REPLACE = {
+    "Runing" : "Course à pied",
+
+}
+
+############################################
+# COMMON FUNCTIONS
+############################################
+
+def normalize_str(text:str) -> str:
+    location = text.strip().lower()
+    """ Remove accents from text """
+    accents = { 'a': ['à', 'ã', 'á', 'â'],
+                'e': ['é', 'è', 'ê', 'ë'],
+                'i': ['î', 'ï'],
+                'u': ['ù', 'ü', 'û'],
+                'o': ['ô', 'ö'],
+                ' ': ['-','/'] 
+                }
+    for (char, accented_chars) in accents.items():
+        for accented_char in accented_chars:
+            location = location.replace(accented_char, char)
+    return location    
 
 
-
-def get_distance(address):
-    try:
-        # Petite pause pour respecter les limites de l'API Nominatim
-        time.sleep(1.5) 
-        loc = geolocator.geocode(address)
-        if loc:
-            return round(geodesic(coords_company, (loc.latitude, loc.longitude)).km, 2) # type: ignore
-        return None
-    except Exception as e:
-        print(f"Erreur pour l'adresse {address}: {e}")
-        return None
-    
-def get_max_distance(transport_mode : str):
+def kestra_output(name : str, value):
     """
-    Get the max distance considering the transport mode
+    Allow kestra output vars when running in kestra
+    or simple print in CLI mode
     """
-    if transport_mode in transport_limits:
-        return transport_limits[transport_mode]
+
+    if KESTRA_MODE:
+        Kestra.outputs({name: value})
     else:
-        return 0
+        print(f" Kestra Ouput -> {name}: {str(value)}")        
 
-
-def run_load(hr_file_path, output_file):
+def extract_xlsx(filtetype:str , file_path, output_file):
     """
     HR xlsxs file loading.
     """
 
-    logger.info(f"Début de l'ingestion des données RH : {hr_file_path}")
+    logger.info(f"Start extracting data from Excel : {file_path}")
     try :
-        df_rh = pd.read_excel(hr_file_path, names= hr_names, dtype= hr_mapping)
-        df_rh.to_parquet(output_file)
-        if KESTRA_MODE:
-            Kestra.outputs({"succes": True})
-            Kestra.outputs({"dims": df_rh.shape})
+        if filtetype == "hr":
+            df = pd.read_excel(file_path, names= HR_COLUMNS, dtype= HR_MAPPING)
+        else:
+            df = pd.read_excel(file_path, names= SPORT_COLUMNS, dtype= SPORT_MAPPING)
+
+        df.to_parquet(output_file)
+        kestra_output("status", SUCCESS)
+        kestra_output("dims", df.shape)
     except Exception as e:
-        print(f"Error during loading {hr_file_path}: {e}")
-        return None
+        logger.error(f"Error during loading {file_path}: {e}")
+        raise FileNotFoundError(f"File {file_path} not found (Critical error).")
 
+    logger.info(f"End extracting HR data to  : {output_file}")
 
-def run_etl(raw_file_parquet, output_file):
-    """
-    Ingestion du fichier RH avec validation pré-insertion.
-    """
-    logger.info(f"Start processing data  : {raw_file_parquet}")
-
-    df_rh = pd.read_parquet(raw_file_parquet)
-    if MAX_ROWS:
-        df_rh = df_rh.head(MAX_ROWS)
-
-    df_rh['distance_kms'] = 0.0
-    mask = df_rh['transport_mode'].isin(primed_transport)
-    df_rh.loc[mask, 'distance_kms'] = df_rh.loc[mask, 'address'].apply(get_distance)
-
-    df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
-
-    df_rh.to_parquet(output_file)
-
-
-def  run_check(processed_file_parquet):
-
-    """
-    Process file checking with GX.
-    """
-    logger.info(f"Start processing data  : {processed_file_parquet}")
-
-    df_rh = pd.read_parquet(processed_file_parquet)
-    min_date_birthday = datetime(1940, 1, 1)
-    max_date_birthday = datetime(2010, 12, 31)
-    min_date_entry = datetime(2020, 1, 1)
-    max_date_entry = datetime.now()
-
-    hr_expectations = [
-        gx.expectations.ExpectColumnValuesToNotBeNull(column= "id"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeUnique(column= "id"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "transport_mode", value_set= transport_names), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'margin_kms', min_value= 0, max_value= None, strict_min=False), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'birthday', min_value= min_date_birthday, max_value= max_date_birthday), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'entry_date', min_value= min_date_entry, max_value= max_date_entry), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnPairValuesAToBeGreaterThanB(column_A="entry_date",   column_B="birthday"), # pyright: ignore[reportPrivateImportUsage]
-    ]    
-
-
-    results = validate_dataframe(df_rh, "hr_suite", hr_expectations)
-    if results.success:
-        # Pattern Publish : Insertion uniquement si la validation réussit
-        logger.info("Données RH insérées avec succès dans PostgreSQL.")
-    else:
-        logger.error(f"Échec de la validation RH : {results}")
-        # En production, on pourrait isoler les lignes erronées ici
-        raise ValueError("Qualité des données RH insuffisante.")
 
 
 def validate_dataframe(df, suite_name, expectations_list):
@@ -185,7 +155,7 @@ def validate_dataframe(df, suite_name, expectations_list):
     batch_definition = data_asset.add_batch_definition_whole_dataframe(f"batch_{suite_name}")
     batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
     
-    # Création et configuration de la suite d'attentes
+    # Create context
     suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
     
     for expectation in expectations_list:
@@ -194,24 +164,245 @@ def validate_dataframe(df, suite_name, expectations_list):
         suite.add_expectation(expectation)
             
     validation_result = batch.validate(suite)
-    return validation_result
+    
+    # On calcule si le flow doit REELLEMENT s'arrêter
+    # On considère un échec VRAI seulement si l'expectation n'est pas marquée 'warning'
+    is_critically_failed = False
 
-def run_save(processed_file_parquet):
+    k_ouput = ""
+    status = SUCCESS
+    
+    for result in validation_result.results:
+        if result.success:
+           k_ouput += f"✅ Expectation : {result.expectation_config.get("description", "")} : Success\n"  # type: ignore
+        else:
+            flaws = result.result.get('partial_unexpected_list',[])
+            flaws_txt = result.result.get('artial_unexpected_list')
+            severity = result.expectation_config.meta.get("severity", "critical")  # type: ignore
+
+            if severity == "critical":
+                k_ouput += f"❌ Expectation : {result.expectation_config.get("description")} : Fail\n"  # type: ignore
+                status = FAILED
+            else:
+                k_ouput += f"⚠️ Expectation : {result.expectation_config.get("description")} : Warning\n"  # type: ignore
+                if status ==  SUCCESS: status = WARNING
+            k_ouput += "- " + f'{"\n- ".join(flaws)}' + "\n"
+
+    kestra_output('detail', k_ouput)
+    kestra_output('status', status)
+
+    if status == SUCCESS:
+        logger.info(f"Succeed to validate {suite_name} data with gX.")
+    elif status == WARNING:
+        # SPECIFIC CASE : no errors except  WARNINGS
+        logger.warning(f"Warning during {suite_name} validation with gX")
+    else:
+        # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
+        logger.error(f"Fail to validate {suite_name} with gX (Critical). : ")
+        raise ValueError(f"{suite_name} quality not sufficient (Critical error).")
+
+############################################
+# HR EMPLOYEES FUNCTIONS
+############################################
+
+def get_distance(address):
+    try:
+        # Need a delay to respect API Nominatim rules
+        time.sleep(GEO_DELAY) 
+        loc = geolocator.geocode(address)
+        if loc:
+            return round(geodesic(COMPANY_COORDS, (loc.latitude, loc.longitude)).km, 2) # type: ignore
+        return None
+    except Exception as e:
+        print(f"Erreur pour l'adresse {address}: {e}")
+        return None
+    
+def get_max_distance(transport_mode : str):
+    """
+    Get the max distance considering the transport mode
+    """
+    if transport_mode in TRANSPORT_LIMIT:
+        return TRANSPORT_LIMIT[transport_mode]
+    else:
+        return 0
+
+def transform_hr(raw_file_parquet, output_file):
+    """
+    Ingestion du fichier RH avec validation pré-insertion.
+    """
+    logger.info(f"Start transforming HR raw data from : {raw_file_parquet}")
+
+    df_rh = pd.read_parquet(raw_file_parquet)
+    if MAX_ROWS:
+        df_rh = df_rh.head(MAX_ROWS)
+
+    df_rh['distance_kms'] = 0.0
+    mask = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
+    relevants = df_rh[mask].shape[0]
+    kestra_output("relevants", relevants)
+
+    logger.info(f"Start gathering location for {relevants} relevant employees")
+    logger.info(f"Could be long, waiting {GEO_DELAY} second(s) between employees")
+
+    df_rh.loc[mask, 'distance_kms'] = df_rh.loc[mask, 'address'].apply(get_distance)
+
+    df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
+
+    df_rh.to_parquet(output_file)
+    kestra_output("status", SUCCESS)
+    logger.info(f"End transforming HR raw data into {output_file}")
+
+
+
+def  validate_hr(processed_file_parquet):
+
+    """
+    Process hr employees file checking with GX.
+    """
+    logger.info(f"Start validating HR data  : {processed_file_parquet}")
+
+    df_rh = pd.read_parquet(processed_file_parquet)
+
+    transport_names = list(TRANSPORT_LIMIT.keys())
+    min_date_birthday = datetime(1940, 1, 1)
+    max_date_birthday = datetime(2010, 12, 31)
+    min_date_entry = datetime(2020, 1, 1)
+    max_date_entry = datetime.now()
+
+    hr_expectations = [
+        gx.expectations.ExpectColumnValuesToNotBeNull(column= "id", description= "No missing ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeUnique(column= "id", description= "No duplicated ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "transport_mode", value_set= transport_names, description= "Transport mode is in the list"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeBetween(column = 'margin_kms', min_value= 0, max_value= None, strict_min=False, description= "Home distance and transport mode are consistent"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeBetween(column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False, description= "Home distance are lower than 200kms"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeBetween(column = 'birthday', min_value= min_date_birthday, max_value= max_date_birthday, description= "Birthdays are > 1940/1/1 and < 2012/12/21"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeBetween(column = 'entry_date', min_value= min_date_entry, max_value= max_date_entry, description= "Entry dates are > 2020/1/1/"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnPairValuesAToBeGreaterThanB(column_A="entry_date",   column_B="birthday", description= "Entry date later than birthday"), # pyright: ignore[reportPrivateImportUsage]
+    ]    
+    validate_dataframe(df_rh, "HR_Data", hr_expectations)
+    logger.info(f"End validating HR data  : {processed_file_parquet}")
+
+
+############################################
+# HR SPORT FUNCTIONS
+############################################
+
+def get_normalized_sport(sport_name):
+    
+    if not sport_name:  
+        return None
+    if sport_name in SPORT_REPLACE.keys():
+        return SPORT_REPLACE[sport_name]
+    
+    for sport in SPORTS_LIST:
+        if normalize_str(sport_name) == normalize_str(sport):
+            return sport
+    return sport_name
+
+
+def load_sport_file(json_sport_file):
+
+    logger.info(f"Start loading Strava Sports List  : {json_sport_file}")
+
+    try:
+        global SPORTS_LIST
+        sports_df = pd.read_json(json_sport_file)
+        SPORTS_LIST = list(sports_df['sport'])
+    except:
+        logger.error(f"Fail to load strava sports list : {json_sport_file}")
+        # En production, on pourrait isoler les lignes erronées ici
+        raise FileNotFoundError(f"Fail to load strava sports list : {json_sport_file}")
+
+ 
+
+def transform_sport(raw_file_parquet, output_file,json_sport_file):
+    """
+    Sport data File transformation
+    """
+    logger.info(f"Start transforming sport raw data from : {raw_file_parquet}")
+    load_sport_file(json_sport_file)
+    df_sport = pd.read_parquet(raw_file_parquet)
+    df_sport['sport_type'] = df_sport['sport_type'].apply(get_normalized_sport)
+
+    df_sport.to_parquet(output_file)
+    kestra_output("status", SUCCESS)
+    logger.info(f"End transforming sport raw data into {output_file}")
+
+
+def  validate_sport(processed_file_parquet,json_sport_file):
+
+    """
+    Process sport file checking with GX.
+    """
+    logger.info(f"Start processing data  : {processed_file_parquet}")
+
+    load_sport_file(json_sport_file)
+    df_sport = pd.read_parquet(processed_file_parquet)
+
+    hr_expectations = [
+        gx.expectations.ExpectColumnValuesToNotBeNull(column= "id", description= "No missing ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeUnique(column= "id", description= "No duplicated ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "sport_type", value_set= SPORTS_LIST,meta={ "severity": "warning", "notes": "Sports not present in Strava System" }, description= "Sport name in Strava refs"), # pyright: ignore[reportPrivateImportUsage]
+    ]    
+
+    validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+    logger.info(f"End validating Sport data  : {processed_file_parquet}")
+
+
+############################################
+# HR EMPLOYEES + SPORT FUNCTIONS
+############################################
+
+def merge_hr_sport(hr_file_path, sport_file_path, output_file):
+    logger.info(f"Start processing data  : {hr_file_path} + {sport_file_path}")
+
+    df_rh = pd.read_parquet(hr_file_path)
+    df_sport = pd.read_parquet(sport_file_path)
+    df_final = df_rh.merge(df_sport,how='left',left_on="id", right_on="id")
+    
+    df_rh.to_parquet(output_file)
+    kestra_output("status", SUCCESS)
+    logger.info(f"End transforming HR raw data into {output_file}")
+
+
+def  validate_merge(merge_file_parquet,json_sport_file):
+
+    """
+    Process merged file checking with GX.
+    """
+    logger.info(f"Start processing data  : {merge_file_parquet}")
+
+    load_sport_file(json_sport_file)
+    df_sport = pd.read_parquet(merge_file_parquet)
+
+    hr_expectations = [
+        gx.expectations.ExpectColumnValuesToNotBeNull(column= "id", description= "No missing ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToBeUnique(column= "id", description= "No duplicated ids"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "sport_type", value_set= SPORTS_LIST,meta={ "severity": "warning", "notes": "Sports not present in Strava System" }, description= "Sport name in Strava refs"), # pyright: ignore[reportPrivateImportUsage]
+    ]    
+
+    validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+    logger.info(f"End validating Sport data  : {merge_file_parquet}")
+
+
+def load_pg(merge_file_parquet):
     """
     Process file checking with GX.
     """
-    logger.info(f"Start saving data to postgres  : {processed_file_parquet}")
+    logger.info(f"Start saving data to postgres  : {merge_file_parquet}")
 
-    df_rh = pd.read_parquet(processed_file_parquet)
+    df_rh = pd.read_parquet(merge_file_parquet)
     df_rh.drop(columns = 'margin_kms',inplace= True)
     df_rh.to_sql('employees', engine, if_exists='replace', index=False)
 
-
-
+############################################
+# CLI ENDPOINT
+############################################
 
 
 if __name__ == "__main__":
-    # KESTRA avoid this, calling directly functions
+    # KESTRA must avoid this, calling functions directly
+    # Allow CLI debugging
     import sys
     # Usage: python ingest_hr.py <action> <source> <destination>
     action = sys.argv[1]
@@ -219,11 +410,19 @@ if __name__ == "__main__":
     BASE_DIR = Path(__file__).parent.parent.parent
     KESTRA_MODE = False
 
-    if action == "load":
-        run_load(f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/kestra/tmp/rh_raw.parquet")
-    elif action == "etl":
-        run_etl(f"{BASE_DIR}/kestra/tmp/rh_raw.parquet", f"{BASE_DIR}/kestra/tmp/rh_processed.parquet")
-    elif action == "check":
-        run_check(f"{BASE_DIR}/kestra/tmp/rh_processed.parquet")
-    elif action == "save":
-        run_save("{BASE_DIR}/kestra/tmp/rh_processed.parquet")        
+    if action == "extract-rh":
+        extract_xlsx('hr',f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/kestra/tmp/rh_raw.parquet")
+    elif action == "transform-rh":
+        transform_hr(f"{BASE_DIR}/kestra/tmp/rh_raw.parquet", f"{BASE_DIR}/kestra/tmp/rh_processed.parquet")
+    elif action == "validate-hr":
+        validate_hr(f"{BASE_DIR}/kestra/tmp/rh_processed.parquet")
+    if action == "extract-sport":
+        extract_xlsx('sport',f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/sport_raw.parquet")
+    elif action == "transform-sport":
+        transform_sport(f"{BASE_DIR}/kestra/tmp/sport_raw.parquet", f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.json")
+    elif action == "validate-sport":
+        validate_sport(f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.json")
+    elif action == "merge":
+        merge_hr_sport(f"{BASE_DIR}/kestra/tmp/rh_processed.parquet",f"{BASE_DIR}/kestra/tmp/sport_processed.parquet",f"{BASE_DIR}/kestra/tmp/merge.parquet")        
+    elif action == "load-pg":
+        load_pg(f"{BASE_DIR}/kestra/tmp/rh_processed.parquet")                
