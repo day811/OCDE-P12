@@ -47,4 +47,11 @@ tasks:
     namespace: sds.infra
     flowId: spark_streaming
     wait: true
+
+  - id: ingest_pipeline
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: ingest_hr
+    wait: true
+  
       
