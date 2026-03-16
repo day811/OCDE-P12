@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 import fastparquet
 import os, time, sys
-
+from typing import List, Any, Tuple, Optional
+from enum import Enum
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, engine as Pse
 import great_expectations as gx
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from geopy.distance import geodesic
 from geopy.geocoders import GoogleV3
@@ -57,11 +58,24 @@ geocode_with_retry = RateLimiter(
 # GEOLOC : "all" : Fetch all coordonates
 # GEOLOC : "relevants" : Fetch coordonates for prime candidates only
 # GEOLOC : "none" : Fetch no coordonates, for testing without requiring API
+class GlocMode(Enum):
+    ALL = "All"
+    RELEVANTS = "Relevants"
+    NONE = 'None'
 
-GEO_LOC = "none" 
+GEO_LOC_MODE:GlocMode = GlocMode.NONE 
+# Delay time between each api request 
 GEO_DELAY = 0.1
-COMPANY_LOCATION = geolocator.geocode(COMPANY_ADDR)
-COMPANY_COORDS = (COMPANY_LOCATION.latitude, COMPANY_LOCATION.longitude) # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue]
+try:
+    COMPANY_LOCATION = geolocator.geocode(COMPANY_ADDR)
+    if COMPANY_LOCATION:
+        COMPANY_COORDS = (COMPANY_LOCATION.latitude, COMPANY_LOCATION.longitude) # type: ignore
+    else:
+        logger.warning("Coordonnées de l'entreprise introuvables. Mode dégradé (distance = 0).")
+        COMPANY_COORDS = (0.0, 0.0)
+except Exception as e:
+    logger.error(f"Erreur lors du géocodage de l'entreprise : {e}")
+    COMPANY_COORDS = (0.0, 0.0)
 
 # DATABASE MAPPING
 HR_MAPPING = {
@@ -81,20 +95,23 @@ HR_COLUMNS = list(HR_MAPPING.keys())
 
 
 #FIELDS REQUIREMENTS
-
-TC = 'Transports en commun'
-VM = 'véhicule thermique/électrique'
-MR = 'Marche/running'
-VT = 'Vélo/Trottinette/Autres' 
+class Ttype(Enum):
+    @classmethod
+    def values(cls):
+        return [member.value for member in cls]
+    TC = 'Transports en commun'
+    VM = 'véhicule thermique/électrique'
+    MR = 'Marche/running'
+    VT = 'Vélo/Trottinette/Autres' 
 
 TRANSPORT_LIMIT = {
-    TC : 0,
-    VM : 0,
-    MR : 15,
-    VT : 25
+    Ttype.TC : 0,
+    Ttype.VM : 0,
+    Ttype.MR : 15,
+    Ttype.VT : 25
 }
-ALL_TRANSPORTS = list(TRANSPORT_LIMIT.keys())
-PRIMED_TRANSPORT = [MR,VT]
+ALL_TRANSPORTS = Ttype.values()
+PRIMED_TRANSPORT = [Ttype.MR,Ttype.VT]
 
 CONTRACT_TYPES = ['CDI','CDD']
 
@@ -105,14 +122,21 @@ CONTRACT_TYPES = ['CDI','CDD']
 
 
 
-def extract_xlsx(filtetype:str , file_path, output_file):
+def extract_xlsx(file_type: str, file_path: str, output_file: str) -> None:
     """
-    HR xlsxs file loading.
+    Extracts raw data from HR or Sport Excel files and converts them to Parquet format.
+    Includes encryption for sensitive HR fields (names and addresses).
+
+    Args:
+        file_type: Type of file to process ("hr" or "sport").
+        file_path: Path to the source Excel file.
+        output_file: Destination path for the generated Parquet file.
     """
+
     details = []
     logger.info(f"Start extracting data from Excel : {file_path}")
     try :
-        if filtetype == "hr":
+        if file_type == "hr":
             df = pd.read_excel(file_path, names= HR_COLUMNS, dtype= HR_MAPPING,header=0)
 
             df['address'] = df['address'].apply(ct.encrypt_text)    
@@ -140,11 +164,19 @@ def extract_xlsx(filtetype:str , file_path, output_file):
 
 
 
-def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
+def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: List[Any]) -> Tuple[str, List[str]]:
     """
-    Fonction générique de validation Great Expectations.
-    Utilise le pattern WAP (Write-Audit-Publish) en mémoire.
+    Generic Great Expectations validation function using the WAP (Write-Audit-Publish) pattern.
+
+    Args:
+        df: The DataFrame to validate.
+        suite_name: Name of the expectation suite.
+        expectations_list: List of GX expectation objects to run.
+
+    Returns:
+        A tuple containing the global status (SUCCESS/WARNING/FAILED) and detailed logs.
     """
+
     context = gx.get_context()
     
     # Création d'une source de données Pandas éphémère pour GX
@@ -163,10 +195,6 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
             
     validation_result = batch.validate(suite)
     
-    # On calcule si le flow doit REELLEMENT s'arrêter
-    # On considère un échec VRAI seulement si l'expectation n'est pas marquée 'warning'
-    is_critically_failed = False
-
     status = SUCCESS
     details = []
     for result in validation_result.results:
@@ -187,7 +215,7 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
                 if len(flaws_index):
                     flaw_output = f"{SP4}Invalid values list :"
                     for index_flaw, flaw in zip(flaws_index,flaws):
-                        employee = str(df.loc[index_flaw, "id"])
+                        employee = str(df.at[index_flaw, "id"])
                         flaw_output +=  f"\n{SP4}- Employee : {employee} --> {str(flaw)}"       
                 else:
                     flaw_output = f"- Invalid values list :\n{SP4}- "
@@ -209,10 +237,20 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
 # HR EMPLOYEES FUNCTIONS
 ############################################
 
-def get_distance(address):
+def get_distance(address: Optional[str]) -> Optional[float]:
+    """
+    Calculates the geodesic distance between the company and a given address using Google Geocoding.
+
+    Args:
+        address: The physical address of the employee.
+
+    Returns:
+        Distance in kilometers (float) or None if geocoding fails.
+    """
+
     try:
 
-        if GEO_LOC:
+        if GEO_LOC_MODE:
             # Need a delay to respect API Nominatim rules
             time.sleep(GEO_DELAY) 
             loc = geolocator.geocode(address)
@@ -225,22 +263,35 @@ def get_distance(address):
         logger.error(f"Erreur pour l'adresse {address}: {e}")
         return None
     
-def get_max_distance(transport_mode : str):
+def get_max_distance(transport_mode: str) -> int:
     """
-    Get the max distance considering the transport mode
+    Retrieves the maximum allowed distance for a specific transport mode.
+
+    Args:
+        transport_mode: The mode of transport used by the employee.
+
+    Returns:
+        The distance limit in km.
     """
+
     if transport_mode in TRANSPORT_LIMIT:
         return TRANSPORT_LIMIT[transport_mode]
     else:
         return 0
 
-def transform_hr(raw_file_parquet, output_file):
+def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     """
-    Ingestion du fichier RH avec validation pré-insertion.
+    Transforms raw HR data by decrypting addresses, calculating age, 
+    seniority, and commuting distances.
+
+    Args:
+        raw_file_parquet: Path to the raw Parquet file.
+        output_file: Path to save the processed Parquet file.
     """
+
     logger.info(f"Start transforming HR raw data from : {raw_file_parquet}")
     details = []
-    
+
     df_rh = pd.read_parquet(raw_file_parquet)
     if MAX_ROWS:
         df_rh = df_rh.head(MAX_ROWS)
@@ -248,13 +299,13 @@ def transform_hr(raw_file_parquet, output_file):
     details.append("Decrypt all addresses")
 
     df_rh['distance_kms'] = 0.0
-    if GEO_LOC != "relevants" and GEO_LOC != "all":
+    if GEO_LOC_MODE != "relevants" and GEO_LOC_MODE != "all":
         relevants = 0
     else:
-        if GEO_LOC == "relevants":
-            mask = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
-        elif GEO_LOC == "all":
-            mask = df_rh['transport_mode'].isin(ALL_TRANSPORTS)    
+        if GEO_LOC_MODE == "relevants":
+            mask = pd.Series = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
+        elif GEO_LOC_MODE == "all":
+            mask = pd.Series = df_rh['transport_mode'].isin(ALL_TRANSPORTS)
 
         relevants = df_rh[mask].shape[0]
         logger.info(f"Start gathering location coordinates for {relevants} relevant employees")
@@ -264,10 +315,14 @@ def transform_hr(raw_file_parquet, output_file):
 
     details.append(f"Calculating distance from company for {relevants} employees ")
 
-    df_rh['age'] = datetime.now().year - pd.to_datetime(df_rh['birthday']).dt.year
+    birth_dates = pd.to_datetime(df_rh['birthday'], errors='coerce')
+    df_rh['age'] = (datetime.now() - birth_dates).dt.days//365
+    df_rh['age'] = df_rh['age'].fillna(0).astype(int)
     details.append(f"Calculating employee ages")
     
-    df_rh['seniority_years'] = (datetime.now() - pd.to_datetime(df_rh['entry_date'])).dt.days // 365
+    entry_dates = pd.to_datetime(df_rh['entry_date'], errors='coerce')
+    df_rh['seniority_years'] = (datetime.now() - entry_dates).dt.days // 365
+    df_rh['seniority_years'] = df_rh['seniority_years'].fillna(0).astype(int)
     details.append(f"Calculating seniority years for employees")
 
     df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
@@ -287,11 +342,17 @@ def transform_hr(raw_file_parquet, output_file):
 
 
 
-def  validate_hr(processed_file_parquet):
+def validate_hr(processed_file_parquet: str) -> None:
+    """
+    Validates processed HR data against business rules using Great Expectations.
 
+    Args:
+        processed_file_parquet: Path to the Parquet file to validate.
+
+    Raises:
+        ValueError: If critical data quality expectations are not met.
     """
-    Process hr employees file checking with GX.
-    """
+
     logger.info(f"Start validating HR data  : {processed_file_parquet}")
 
     df_rh = pd.read_parquet(processed_file_parquet)
@@ -302,7 +363,6 @@ def  validate_hr(processed_file_parquet):
     df_rh['last_name'] = df_rh['last_name'].apply(ct.decrypt_text)    
     details.append("Decrypt all last names for validation")
 
-    transport_names = list(TRANSPORT_LIMIT.keys())
     min_age = 16
     max_age = 80
     min_seniority_years = 0
@@ -320,7 +380,7 @@ def  validate_hr(processed_file_parquet):
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "last_name", description= "No missing last_names"),
         gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
-            column= "transport_mode", value_set= transport_names, description= "Transport mode is in the list"),
+            column= "transport_mode", value_set= ALL_TRANSPORTS, description= "Transport mode is in the list"),
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "distance_kms", description= "No missing required distances",meta={ "severity": "warning" }),
         gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
@@ -353,10 +413,16 @@ def  validate_hr(processed_file_parquet):
 ############################################
 
 
-def transform_sport(raw_file_parquet, output_file,excel_sport_file):
+def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: str) -> None:
     """
-    Sport data File transformation
+    Normalizes sport names in the sportive data using the Sport_engine aliases.
+
+    Args:
+        raw_file_parquet: Path to the raw sportive Parquet file.
+        output_file: Path for the normalized Parquet file.
+        excel_sport_file: Path to the sports reference Excel file.
     """
+
     logger.info(f"Start transforming sport raw data from : {raw_file_parquet}")
 
     details = []
@@ -374,11 +440,18 @@ def transform_sport(raw_file_parquet, output_file,excel_sport_file):
     logger.info(f"End transforming sport raw data into {output_file}")
 
 
-def  validate_sport(processed_file_parquet,excel_sport_file):
+def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
+    """
+    Checks that all declared sports in the file exist in the Strava reference list.
 
+    Args:
+        processed_file_parquet: Path to the processed sportive Parquet file.
+        excel_sport_file: Path to the sports reference Excel file.
+
+    Raises:
+        ValueError: If critical mismatches are found.
     """
-    Process sport file checking with GX.
-    """
+
     logger.info(f"Start processing data  : {processed_file_parquet}")
 
     sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
@@ -409,7 +482,16 @@ def  validate_sport(processed_file_parquet,excel_sport_file):
 # HR EMPLOYEES + SPORT FUNCTIONS
 ############################################
 
-def merge_hr_sport(hr_file_path, sport_file_path, output_file):
+def merge_hr_sport(hr_file_path: str, sport_file_path: str, output_file: str) -> None:
+    """
+    Performs a left join between HR data and sportive data based on employee ID.
+
+    Args:
+        hr_file_path: Path to the processed HR Parquet.
+        sport_file_path: Path to the processed Sport Parquet.
+        output_file: Path for the merged result.
+    """
+
     logger.info(f"Start mergin employees and sportive data  : {hr_file_path} + {sport_file_path}")
 
     df_hr = pd.read_parquet(hr_file_path)
@@ -422,30 +504,34 @@ def merge_hr_sport(hr_file_path, sport_file_path, output_file):
     logger.info(f"End transforming HR raw data into {output_file}")
 
 
-def  validate_merge(hr_parquet, sport_parquet,merge_parquet):
+def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> None:
+    """
+    Ensures data integrity after merging (no lost employees, identifying orphans).
 
+    Args:
+        hr_parquet: Path to reference HR data.
+        sport_parquet: Path to reference Sport data.
+        merge_parquet: Path to the merged file to validate.
     """
-    Process merged file checking with GX.
-    """
+
     logger.info(f"Start validating merge file  : {merge_parquet}")
 
     df_hr = pd.read_parquet(hr_parquet)
-    nb_employees = df_hr.shape[0]
+    nb_employees:int = len(df_hr)
 
     df_sport = pd.read_parquet(sport_parquet)
     df_merge = pd.read_parquet(merge_parquet)
-    nb_merge = df_merge.shape[0]
+    nb_merge:int = len(df_merge)
 
     df_sports_test = df_sport.merge(df_merge, how= 'outer', on="id",indicator=True)
     df_missing_sports = df_sports_test[df_sports_test['_merge'] == 'right_only']
-    nb_missing_sports = df_missing_sports.shape[0]
+    nb_missing_sports:int = len(df_missing_sports)
 
     df_extra_sports = df_sports_test[df_sports_test['_merge'] == 'left_only']
-    nb_extra_sports = df_extra_sports.shape[0]
+    nb_extra_sports:int = len(df_extra_sports)
 
     df_extra_declared_sports = df_extra_sports[df_extra_sports['sport_type_y'].notnull()]
-    nb_extra_declared_sports = df_extra_declared_sports.shape[0]
-
+    nb_extra_declared_sports:int = len(df_extra_declared_sports)
     details = []
     final_status = SUCCESS
 
@@ -493,12 +579,16 @@ def  validate_merge(hr_parquet, sport_parquet,merge_parquet):
         raise ValueError(f"Quality not sufficient in merge file (Critical error).")
 
 
-def load_pg(merge_file_parquet):
+def load_pg(merge_file_parquet: str) -> None:
     """
-    Process file checking with GX.
+    Cleans final columns and loads the merged dataset into the PostgreSQL 'employees' table.
+
+    Args:
+        merge_file_parquet: Path to the final Parquet file to load.
     """
+
     logger.info(f"Start saving data to postgres  : {merge_file_parquet}")
-    engine = create_engine(DATABASE_URL)
+    engine:Pse.Engine = create_engine(DATABASE_URL)
 
     df_merge = pd.read_parquet(merge_file_parquet)
     
@@ -512,8 +602,10 @@ def load_pg(merge_file_parquet):
     ct.kestra_output('detail', details, f"{SP2}- ", lf=True)
 
     try : 
-        df_merge.to_sql('employees', engine, if_exists='replace', index=False)
-        ct.kestra_output("geoloc", GEO_LOC.capitalize())
+        with engine.begin() as conn:
+            conn.execute(text("TRUNCATE TABLE employees")) 
+            df_merge.to_sql('employees', conn, if_exists='append', index=False)
+        ct.kestra_output("geoloc", str(GEO_LOC_MODE).capitalize())
         ct.kestra_output("shape", df_merge.shape, sep= " X ", trail= False)
         ct.kestra_output("status", SUCCESS)
     except Exception as e:
