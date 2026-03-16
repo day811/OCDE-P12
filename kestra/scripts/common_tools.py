@@ -7,6 +7,7 @@ from kestra import Kestra
 from datetime import datetime, timedelta
 import calendar
 from typing import List, Dict, Any, Tuple, Optional, cast
+from cryptography.fernet import Fernet
 
 # --- Logging Configuration ---
 logging.basicConfig(
@@ -223,7 +224,7 @@ class Sport_engine():
             A filtered list of strava-like sports .
         """
         if not len(self.strava_sport_list):
-            self.strava_sport_list = self.df[self.df['stravalist']==1]['sport'].to_list()
+            self.strava_sport_list = self.df[self.df['strava_list']==1]['sport'].to_list()
         return self.strava_sport_list
 
     def get_normalized_sport(self, sport_name: Optional[str]) -> Optional[str]:
