@@ -75,10 +75,11 @@ def run_generation(source_xlsx, output_parquet, excel_sport_file, num_rows=1200)
         
         cur_activity['sport'] = activity['sport'] 
         for perf in activity['perfs']:
-            cur_activity['distance_meters'] = perf['distance_meters']
-            cur_activity['begin_date'] = perf['begin_date']
-            cur_activity['end_date'] = perf['end_date']
-            final_activities.append(cur_activity)
+            new_activity = cur_activity.copy()
+            new_activity['distance_meters'] = perf['distance_meters']
+            new_activity['begin_date'] = perf['begin_date']
+            new_activity['end_date'] = perf['end_date']
+            final_activities.append(new_activity)
             nb_created +=1
 
     # 3. Sauvegarde en CSV pour le plugin Kestra
