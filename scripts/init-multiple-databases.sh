@@ -19,6 +19,8 @@ EOSQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS employees (
     id INTEGER PRIMARY KEY,
+    last_name VARCHAR(100),
+    first_name VARCHAR(100),
     age INTEGER,
     business_unit VARCHAR(50),
     seniority_years  date, 
@@ -35,8 +37,9 @@ EOSQL
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS sports_activities (
     id SERIAL PRIMARY KEY,
-    employee_id INTEGER,  -- Foreign key handled by Spark joins
-    activity_date TIMESTAMP,
+    employee_id INTEGER,  
+    begin_date TIMESTAMP,
+    end_date TIMESTAMP,
     sport_type VARCHAR(50),
     distance_meters INTEGER,
     duration_seconds INTEGER,
