@@ -122,5 +122,6 @@ def run_generation(
 if __name__ == "__main__":
     # CLI parameters
     BASE_DIR = Path(__file__).parent.parent.parent
+    ct.KESTRA_MODE = False
 
     run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 500)
