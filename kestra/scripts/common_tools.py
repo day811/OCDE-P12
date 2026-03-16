@@ -113,11 +113,11 @@ def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail
     final_txt += sep.join([ str(value) for value in values])
     final_txt += lf_txt + SP2
     
-    if KESTRA_MODE:
+    if KESTRA_MODE :
         Kestra.outputs({name: final_txt})
-    else:
-        print_value = str(final_txt).replace("&nbsp;", " ")
-        print(f" Kestra Ouput -> {name}: \n{print_value}")        
+    log_text = str(final_txt).replace("&nbsp;", " ")
+    logger.info(f"\n{name}: {log_text}")
+
 
 def normalize_str(text: str) -> str:
     """
