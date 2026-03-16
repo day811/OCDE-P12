@@ -55,17 +55,17 @@ geocode_with_retry = RateLimiter(
     error_wait_seconds=4
 )
 
-# GEOLOC : "all" : Fetch all coordonates
-# GEOLOC : "relevants" : Fetch coordonates for prime candidates only
-# GEOLOC : "none" : Fetch no coordonates, for testing without requiring API
+# GEOLOC : ALL : Fetch all coordonates
+# GEOLOC : RELEVANTS : Fetch coordonates for prime candidates only
+# GEOLOC : NONE : Fetch no coordonates, for testing without requiring API
 class GlocMode(Enum):
-    ALL = "All"
-    RELEVANTS = "Relevants"
-    NONE = 'None'
+    All = "All"
+    Relevants = "Relevants"
+    Nobody = 'None'
 
-GEO_LOC_MODE:GlocMode = GlocMode.NONE 
+GEO_LOC_MODE:GlocMode = GlocMode.All 
 # Delay time between each api request 
-GEO_DELAY = 0.1
+GEO_DELAY = 0.15
 try:
     COMPANY_LOCATION = geolocator.geocode(COMPANY_ADDR)
     if COMPANY_LOCATION:
@@ -105,13 +105,13 @@ class Ttype(Enum):
     VT = 'Vélo/Trottinette/Autres' 
 
 TRANSPORT_LIMIT = {
-    Ttype.TC : 0,
-    Ttype.VM : 0,
-    Ttype.MR : 15,
-    Ttype.VT : 25
+    Ttype.TC.value : 150,
+    Ttype.VM.value : 250,
+    Ttype.MR.value : 15,
+    Ttype.VT.value : 25
 }
 ALL_TRANSPORTS = Ttype.values()
-PRIMED_TRANSPORT = [Ttype.MR,Ttype.VT]
+PRIMED_TRANSPORT = [Ttype.MR.value,Ttype.VT.value]
 
 CONTRACT_TYPES = ['CDI','CDD']
 
@@ -299,15 +299,15 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     details.append("Decrypt all addresses")
 
     df_rh['distance_kms'] = 0.0
-    if GEO_LOC_MODE != "relevants" and GEO_LOC_MODE != "all":
+    if GEO_LOC_MODE == GlocMode.Nobody:
         relevants = 0
     else:
-        if GEO_LOC_MODE == "relevants":
-            mask = pd.Series = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
-        elif GEO_LOC_MODE == "all":
-            mask = pd.Series = df_rh['transport_mode'].isin(ALL_TRANSPORTS)
+        if GEO_LOC_MODE == GlocMode.Relevants:
+            mask: pd.Series = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
+        elif GEO_LOC_MODE == GlocMode.All:
+            mask: pd.Series = df_rh['transport_mode'].isin(ALL_TRANSPORTS)
 
-        relevants = df_rh[mask].shape[0]
+        relevants = len(df_rh[mask])
         logger.info(f"Start gathering location coordinates for {relevants} relevant employees")
         logger.info(f"Could be long, waiting {GEO_DELAY} second(s) between employees")
 
@@ -326,7 +326,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     details.append(f"Calculating seniority years for employees")
 
     df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
-    details.append(f"Calculating difference betweem transport max distance and employees home")
+    details.append(f"Calculating difference betweem transport max distance and employees home distance")
 
     cols_to_drop = ['birthday', 'entry_date','address']
     df_rh.drop(columns = cols_to_drop, inplace= True)
@@ -370,6 +370,10 @@ def validate_hr(processed_file_parquet: str) -> None:
     min_salary = 15000
     max_salary = 150000
 
+    distance_rule = f"{SP2}\n{SP4}- " + f"{SP2}\n{SP4}- ".join([f"{index} <= {TRANSPORT_LIMIT[index]}kms" for index in TRANSPORT_LIMIT.keys()]) + f"{SP2}\n"
+    contract_rule = f"[{','.join(CONTRACT_TYPES)}]"
+    transport_rule = f"\n[{' , '.join(ALL_TRANSPORTS)}]\n"
+
     hr_expectations = [
         gx.expectations.ExpectColumnValuesToNotBeNull(  # type: ignore
             column= "id", description= "No missing ids"), 
@@ -380,15 +384,13 @@ def validate_hr(processed_file_parquet: str) -> None:
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "last_name", description= "No missing last_names"),
         gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
-            column= "transport_mode", value_set= ALL_TRANSPORTS, description= "Transport mode is in the list"),
+            column= "transport_mode", value_set= ALL_TRANSPORTS, description= f"Transport mode is in the list :  {transport_rule}"),
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "distance_kms", description= "No missing required distances",meta={ "severity": "warning" }),
         gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
-            column= "employement_contract", value_set= CONTRACT_TYPES, description= "Employement contract is correct"),
+            column= "employement_contract", value_set= CONTRACT_TYPES, description= f"Employement contract is in {contract_rule}"),
         gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
-            column = 'margin_kms', min_value= 0, max_value= None, strict_min=False, description= "Home distance and transport mode are consistent"),
-        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
-            column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False, description= "Home distance between 0 and 200kms"),
+            column = 'margin_kms', min_value= 0, max_value= None, strict_min=False, description= f"Transport mode and home distance are consistent{distance_rule}"),
         gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
             column = 'age', min_value= min_age, max_value= max_age, description= f"Employees age between {min_age} and {max_age}"), 
         gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
@@ -624,7 +626,7 @@ if __name__ == "__main__":
     import sys
     # Usage: python ingest_hr.py <action> <source> <destination>
     action = sys.argv[1]
-    #MAX_ROWS = 10
+    #MAX_ROWS = 5
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
 
