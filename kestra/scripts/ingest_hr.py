@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import fastparquet
 import os, time, sys
+
 import logging
 from sqlalchemy import create_engine
 import great_expectations as gx
@@ -10,8 +11,8 @@ from pathlib import Path
 from geopy.distance import geodesic
 from geopy.geocoders import GoogleV3
 from geopy.extra.rate_limiter import RateLimiter
-from kestra import Kestra
-import hashlib
+import common_tools as ct
+
             
 # --- Configuration du Logging ---
 logging.basicConfig(
@@ -19,18 +20,19 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     stream=sys.stdout  
     )
-logger = logging.getLogger("sds.infra.pipeline")
+logger = logging.getLogger("sds.infra.ingest_hr")
 logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
 
 # --- Initialisation des Connexions ---
 # L'URL de la base de données est injectée via un secret Kestra dans les variables d'environnement
+
+                      
 DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
 if not DATABASE_URL:
     logger.error("La chaîne de connexion à la base de données est manquante.")
     raise EnvironmentError("DB_CONNECTION_STRING non définie.")
 
 MAX_ROWS = None
-KESTRA_MODE = True
 
 FAILED = "❌&nbsp;Failed"
 WARNING = "⚠️&nbsp;Warning"
@@ -43,16 +45,20 @@ SP4 = "&nbsp;"*4
 GOOGLE_MAPS_KEY = os.getenv('GOOGLE_MAPS_KEY',"")
 COMPANY_ADDR = "1362 Av. des Platanes, 34970 Lattes"
 
-geolocator = GoogleV3(api_key=GOOGLE_MAPS_KEY, timeout=10)
+geolocator = GoogleV3(api_key=GOOGLE_MAPS_KEY, timeout=10)  # type: ignore
 
 geocode_with_retry = RateLimiter(
     geolocator.geocode, 
-    min_delay_seconds=2, 
+    min_delay_seconds=0.2, 
     max_retries=3, 
     error_wait_seconds=4
 )
 
-GEO_LOC = True # WETHER OR NOT USE GEOLOCATION - Useful for testing
+# GEOLOC : "all" : Fetch all coordonates
+# GEOLOC : "relevants" : Fetch coordonates for prime candidates only
+# GEOLOC : "none" : Fetch no coordonates, for testing without requiring API
+
+GEO_LOC = "none" 
 GEO_DELAY = 0.1
 COMPANY_LOCATION = geolocator.geocode(COMPANY_ADDR)
 COMPANY_COORDS = (COMPANY_LOCATION.latitude, COMPANY_LOCATION.longitude) # pyright: ignore[reportOptionalMemberAccess, reportAttributeAccessIssue]
@@ -71,13 +77,8 @@ HR_MAPPING = {
     'address' : object,
     'transport_mode' : object,
 }
-SPORT_MAPPING = {
-    'id' : np.int32,
-    'sport_type' : object
-}
-
 HR_COLUMNS = list(HR_MAPPING.keys())
-SPORT_COLUMNS = list(SPORT_MAPPING.keys())
+
 
 #FIELDS REQUIREMENTS
 
@@ -92,64 +93,45 @@ TRANSPORT_LIMIT = {
     MR : 15,
     VT : 25
 }
-
+ALL_TRANSPORTS = list(TRANSPORT_LIMIT.keys())
 PRIMED_TRANSPORT = [MR,VT]
 
-SPORTS_LIST = []
-SPORT_REPLACE = {
-    "runing" : "Course à pied",
-    "running" : "Course à pied",    
-    "triathlon" : "Course à pied",    
-}
 CONTRACT_TYPES = ['CDI','CDD']
 
 ############################################
 # COMMON FUNCTIONS
 ############################################
 
-def normalize_str(text:str) -> str:
-    location = text.strip().lower()
-    """ Remove accents from text """
-    accents = { 'a': ['à', 'ã', 'á', 'â'],
-                'e': ['é', 'è', 'ê', 'ë'],
-                'i': ['î', 'ï'],
-                'u': ['ù', 'ü', 'û'],
-                'o': ['ô', 'ö'],
-                ' ': ['-','/'] 
-                }
-    for (char, accented_chars) in accents.items():
-        for accented_char in accented_chars:
-            location = location.replace(accented_char, char)
-    return location    
 
 
-def kestra_output(name : str, value):
-    """
-    Allow kestra output vars when running in kestra
-    or simple print in CLI mode
-    """
-
-    if KESTRA_MODE:
-        Kestra.outputs({name: value})
-    else:
-        print_value = str(value).replace("&nbsp;", " ")
-        print(f" Kestra Ouput -> {name}: \n{print_value}")        
 
 def extract_xlsx(filtetype:str , file_path, output_file):
     """
     HR xlsxs file loading.
     """
-
+    details = []
     logger.info(f"Start extracting data from Excel : {file_path}")
     try :
         if filtetype == "hr":
             df = pd.read_excel(file_path, names= HR_COLUMNS, dtype= HR_MAPPING,header=0)
-        else:
-            df = pd.read_excel(file_path, names= SPORT_COLUMNS, dtype= SPORT_MAPPING,header=0)
 
+            df['address'] = df['address'].apply(ct.encrypt_text)    
+            details.append("Crypt all addresses")
+
+            df['first_name'] = df['first_name'].apply(ct.encrypt_text)    
+            details.append("Crypt all first_names")
+
+            df['last_name'] = df['last_name'].apply(ct.encrypt_text)    
+            details.append("Crypt all last_names")
+
+            ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+        
+        else:
+            df = pd.read_excel(file_path, names= ct.SPORT_COLUMNS, dtype= ct.SPORT_MAPPING,header=0)
+            
         df.to_parquet(output_file)
-        kestra_output("status", SUCCESS)
-        kestra_output("shape", df.shape)
+        ct.kestra_output("status", SUCCESS)
+        ct.kestra_output("shape", df.shape, sep= " X ", trail= False)
     except Exception as e:
         logger.error(f"Error during loading {file_path}: {e}")
         raise FileNotFoundError(f"File {file_path} not found (Critical error).")
@@ -185,22 +167,21 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
     # On considère un échec VRAI seulement si l'expectation n'est pas marquée 'warning'
     is_critically_failed = False
 
-    k_output = ""
     status = SUCCESS
-    
+    details = []
     for result in validation_result.results:
         if result.success:
-           k_output += f"{SP2}- Expectation : {result.expectation_config.get('description', '')} : {SUCCESS}\n"  # type: ignore
+           details.append(f"Expectation : {result.expectation_config.get('description', '')} : {SUCCESS}")  # type: ignore
         else:
             flaws = result.result.get('partial_unexpected_list',[])
             flaws_index = result.result.get('partial_unexpected_index_list',[])
             severity = result.expectation_config.meta.get("severity", "critical")  # type: ignore
 
             if severity == "critical":
-                k_output += f"{SP2}- Expectation : {result.expectation_config.get('description',)} : {FAILED}\n"  # type: ignore
+                details.append(f"Expectation : {result.expectation_config.get('description',)} : {FAILED}")  # type: ignore
                 status = FAILED
             else:
-                k_output += f"{SP2}- Expectation : {result.expectation_config.get('description',)} : {WARNING}\n"  # type: ignore
+                details.append(f"Expectation : {result.expectation_config.get('description',)} : {WARNING}")  # type: ignore
                 if status ==  SUCCESS: status = WARNING
             if len(flaws): 
                 if len(flaws_index):
@@ -209,13 +190,10 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
                         employee = str(df.loc[index_flaw, "id"])
                         flaw_output +=  f"\n{SP4}- Employee : {employee} --> {str(flaw)}"       
                 else:
-                    flaw_output = f"{SP4}Invalid values list :\n{SP4}- "
+                    flaw_output = f"- Invalid values list :\n{SP4}- "
                     flaw_output +=  f"\n{SP4}- ".join([str(flaw) for flaw in flaws])
 
-                k_output += f'{flaw_output}\n'
-
-    kestra_output('detail', k_output)
-    kestra_output('status', status)
+                details.append(f'{flaw_output}')
 
     if status == SUCCESS:
         logger.info(f"Succeed to validate {suite_name} data with gX.")
@@ -225,7 +203,7 @@ def validate_dataframe(df:pd.DataFrame, suite_name, expectations_list):
     else:
         # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
         logger.error(f"Fail to validate {suite_name} with gX (Critical). : ")
-        raise ValueError(f"{suite_name} quality not sufficient (Critical error).")
+    return status, details
 
 ############################################
 # HR EMPLOYEES FUNCTIONS
@@ -244,7 +222,7 @@ def get_distance(address):
         else :
             return 0
     except Exception as e:
-        print(f"Erreur pour l'adresse {address}: {e}")
+        logger.error(f"Erreur pour l'adresse {address}: {e}")
         return None
     
 def get_max_distance(transport_mode : str):
@@ -261,34 +239,50 @@ def transform_hr(raw_file_parquet, output_file):
     Ingestion du fichier RH avec validation pré-insertion.
     """
     logger.info(f"Start transforming HR raw data from : {raw_file_parquet}")
-
+    details = []
+    
     df_rh = pd.read_parquet(raw_file_parquet)
     if MAX_ROWS:
         df_rh = df_rh.head(MAX_ROWS)
+    df_rh['address'] = df_rh['address'].apply(ct.decrypt_text)    
+    details.append("Decrypt all addresses")
 
     df_rh['distance_kms'] = 0.0
-    mask = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
-    relevants = df_rh[mask].shape[0]
-    kestra_output("relevants", relevants)
+    if GEO_LOC != "relevants" and GEO_LOC != "all":
+        relevants = 0
+    else:
+        if GEO_LOC == "relevants":
+            mask = df_rh['transport_mode'].isin(PRIMED_TRANSPORT)
+        elif GEO_LOC == "all":
+            mask = df_rh['transport_mode'].isin(ALL_TRANSPORTS)    
 
-    logger.info(f"Start gathering location for {relevants} relevant employees")
-    logger.info(f"Could be long, waiting {GEO_DELAY} second(s) between employees")
+        relevants = df_rh[mask].shape[0]
+        logger.info(f"Start gathering location coordinates for {relevants} relevant employees")
+        logger.info(f"Could be long, waiting {GEO_DELAY} second(s) between employees")
 
-    df_rh.loc[mask, 'distance_kms'] = df_rh.loc[mask, 'address'].apply(get_distance)
+        df_rh.loc[mask, 'distance_kms'] = df_rh.loc[mask, 'address'].apply(get_distance)
+
+    details.append(f"Calculating distance from company for {relevants} employees ")
 
     df_rh['age'] = datetime.now().year - pd.to_datetime(df_rh['birthday']).dt.year
+    details.append(f"Calculating employee ages")
     
     df_rh['seniority_years'] = (datetime.now() - pd.to_datetime(df_rh['entry_date'])).dt.days // 365
+    details.append(f"Calculating seniority years for employees")
 
     df_rh['margin_kms'] = df_rh['transport_mode'].apply(get_max_distance) - df_rh['distance_kms']
+    details.append(f"Calculating difference betweem transport max distance and employees home")
 
-    cols_to_drop = ['last_name', 'first_name', 'address', 'entry_date', 'birthday']
+    cols_to_drop = ['birthday', 'entry_date','address']
     df_rh.drop(columns = cols_to_drop, inplace= True)
+    details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
+
+    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
 
     df_rh.to_parquet(output_file)
-    kestra_output("shape", df_rh.shape)
+    ct.kestra_output("shape", df_rh.shape, sep= " X ", trail= False)
 
-    kestra_output("status", SUCCESS)
+    ct.kestra_output("status", SUCCESS)
     logger.info(f"End transforming HR raw data into {output_file}")
 
 
@@ -301,25 +295,56 @@ def  validate_hr(processed_file_parquet):
     logger.info(f"Start validating HR data  : {processed_file_parquet}")
 
     df_rh = pd.read_parquet(processed_file_parquet)
+    details=[]
+    df_rh['first_name'] = df_rh['first_name'].apply(ct.decrypt_text)    
+    details.append("Decrypt all first names for validation")
+
+    df_rh['last_name'] = df_rh['last_name'].apply(ct.decrypt_text)    
+    details.append("Decrypt all last names for validation")
 
     transport_names = list(TRANSPORT_LIMIT.keys())
     min_age = 16
     max_age = 80
     min_seniority_years = 0
     max_seniority_years = 7
+    min_salary = 15000
+    max_salary = 150000
 
     hr_expectations = [
-        gx.expectations.ExpectColumnValuesToNotBeNull(column= "id", description= "No missing ids"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeUnique(column= "id", description= "No duplicated ids"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeInSet(column= "transport_mode", value_set= transport_names, description= "Transport mode is in the list"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToNotBeNull(column= "distance_kms", description= "No missing required distances",meta={ "severity": "warning" }), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeInSet(column= "employement_contract", value_set= CONTRACT_TYPES, description= "Employement contract is correct"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'margin_kms', min_value= 0, max_value= None, strict_min=False, description= "Home distance and transport mode are consistent"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False, description= "Home distance between 0 and 200kms"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'age', min_value= min_age, max_value= max_age, description= f"Employees age between {min_age} and {max_age}"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnValuesToBeBetween(column = 'seniority_years', min_value= min_seniority_years, max_value= max_seniority_years, description= f"Employees senority years between {min_seniority_years} and {max_seniority_years}"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnValuesToNotBeNull(  # type: ignore
+            column= "id", description= "No missing ids"), 
+        gx.expectations.ExpectColumnValuesToBeUnique( # type: ignore
+            column= "id", description= "No duplicated ids"), 
+        gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
+            column= "first_name", description= "No missing first names"),
+        gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
+            column= "last_name", description= "No missing last_names"),
+        gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
+            column= "transport_mode", value_set= transport_names, description= "Transport mode is in the list"),
+        gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
+            column= "distance_kms", description= "No missing required distances",meta={ "severity": "warning" }),
+        gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
+            column= "employement_contract", value_set= CONTRACT_TYPES, description= "Employement contract is correct"),
+        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
+            column = 'margin_kms', min_value= 0, max_value= None, strict_min=False, description= "Home distance and transport mode are consistent"),
+        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
+            column = 'distance_kms', min_value= 0, max_value= 200, strict_min=False, description= "Home distance between 0 and 200kms"),
+        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
+            column = 'age', min_value= min_age, max_value= max_age, description= f"Employees age between {min_age} and {max_age}"), 
+        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
+            column = 'seniority_years', min_value= min_seniority_years, max_value= max_seniority_years, 
+            description= f"Employees senority years between {min_seniority_years} and {max_seniority_years}"), 
+        gx.expectations.ExpectColumnValuesToBeBetween( # type: ignore
+            column = 'salary', min_value= min_salary, max_value= max_salary, description= f"Employee salaries between {min_salary} and {max_salary}"), 
     ]    
-    validate_dataframe(df_rh, "HR_Data", hr_expectations)
+
+    status, new_details = validate_dataframe(df_rh, "HR_Data", hr_expectations)
+    details += new_details
+    ct.kestra_output('status', status)
+    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+    if status == FAILED:
+        raise ValueError(f"HR Employees data quality not sufficient (Critical error).")
+
     logger.info(f"End validating HR data  : {processed_file_parquet}")
 
 
@@ -327,68 +352,56 @@ def  validate_hr(processed_file_parquet):
 # HR SPORT FUNCTIONS
 ############################################
 
-def get_normalized_sport(sport_name):
-    
-    if not sport_name:  
-        return None
-    norm_sport = normalize_str(sport_name)
-    if norm_sport in SPORT_REPLACE.keys():
-        return SPORT_REPLACE[norm_sport]
-    
-    for sport in SPORTS_LIST:
-        if norm_sport == normalize_str(sport):
-            return sport
-    return sport_name
 
-
-def load_sport_file(json_sport_file):
-
-    logger.info(f"Start loading Strava Sports List  : {json_sport_file}")
-
-    try:
-        global SPORTS_LIST
-        sports_df = pd.read_json(json_sport_file)
-        SPORTS_LIST = list(sports_df['sport'])
-    except:
-        logger.error(f"Fail to load strava sports list : {json_sport_file}")
-        # En production, on pourrait isoler les lignes erronées ici
-        raise FileNotFoundError(f"Fail to load strava sports list : {json_sport_file}")
-
- 
-
-def transform_sport(raw_file_parquet, output_file,json_sport_file):
+def transform_sport(raw_file_parquet, output_file,excel_sport_file):
     """
     Sport data File transformation
     """
     logger.info(f"Start transforming sport raw data from : {raw_file_parquet}")
-    load_sport_file(json_sport_file)
+
+    details = []
+    sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
     df_sport = pd.read_parquet(raw_file_parquet)
-    df_sport['sport_type'] = df_sport['sport_type'].apply(get_normalized_sport)
+    df_sport['sport_type'] = df_sport['sport_type'].apply(sport_engine.get_normalized_sport)
+    details.append(f"Normalize and substitute sport names")
 
     df_sport.to_parquet(output_file)
-    kestra_output("shape", df_sport.shape)
+    ct.kestra_output("shape", df_sport.shape, sep= " X ", trail= False)
 
-    kestra_output("status", SUCCESS)
+    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+
+    ct.kestra_output("status", SUCCESS)
     logger.info(f"End transforming sport raw data into {output_file}")
 
 
-def  validate_sport(processed_file_parquet,json_sport_file):
+def  validate_sport(processed_file_parquet,excel_sport_file):
 
     """
     Process sport file checking with GX.
     """
     logger.info(f"Start processing data  : {processed_file_parquet}")
 
-    load_sport_file(json_sport_file)
+    sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
+
     df_sport = pd.read_parquet(processed_file_parquet)
 
     hr_expectations = [
         gx.expectations.ExpectColumnValuesToNotBeNull(column= "id", description= "No missing ids"), # pyright: ignore[reportPrivateImportUsage]
         gx.expectations.ExpectColumnValuesToBeUnique(column= "id", description= "No duplicated ids"), # pyright: ignore[reportPrivateImportUsage]
-        gx.expectations.ExpectColumnDistinctValuesToBeInSet(column= "sport_type", value_set= SPORTS_LIST,meta={ "severity": "warning" }, description= "Sport name exists in Strava refs"), # pyright: ignore[reportPrivateImportUsage]
+        gx.expectations.ExpectColumnDistinctValuesToBeInSet( # pyright: ignore[reportPrivateImportUsage]
+            column= "sport_type", 
+            value_set= sport_engine.get_strava_sport_list(), 
+            meta={ "severity": "warning" }, 
+            description= "Sport name exists in Strava refs"), 
     ]    
 
-    validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+    status, details = validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+    ct.kestra_output('status', status)
+    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+    if status == FAILED:
+        raise ValueError(f"HR sportive data quality not sufficient (Critical error).")
+
+
     logger.info(f"End validating Sport data  : {processed_file_parquet}")
 
 
@@ -404,8 +417,8 @@ def merge_hr_sport(hr_file_path, sport_file_path, output_file):
     df_final = df_hr.merge(df_sport,how='left',left_on="id", right_on="id")
     
     df_final.to_parquet(output_file)
-    kestra_output("shape", df_final.shape)
-    kestra_output("status", SUCCESS)
+    ct.kestra_output("shape", df_final.shape, sep= " X ", trail= False)
+    ct.kestra_output("status", SUCCESS)
     logger.info(f"End transforming HR raw data into {output_file}")
 
 
@@ -433,41 +446,41 @@ def  validate_merge(hr_parquet, sport_parquet,merge_parquet):
     df_extra_declared_sports = df_extra_sports[df_extra_sports['sport_type_y'].notnull()]
     nb_extra_declared_sports = df_extra_declared_sports.shape[0]
 
-    status = []
+    details = []
     final_status = SUCCESS
 
     lost_employees = nb_employees-nb_merge
     if lost_employees:
-        status.append(f'Expectation : Keep all {nb_employees} employees  in merge file : {FAILED} : {lost_employees} lost')
+        details.append(f'Expectation : Keep all {nb_employees} employees  in merge file : {FAILED} : {lost_employees} lost')
         final_status = FAILED
     else:
-        status.append(f'Expectation : Keep all {nb_employees} employees in merge file : {SUCCESS}')
+        details.append(f'Expectation : Keep all {nb_employees} employees in merge file : {SUCCESS}')
 
     if nb_missing_sports:
-        status.append(f'Expectation : Each employee has id in sportive data : {WARNING} : {nb_missing_sports} found')
+        details.append(f'Expectation : Each employee has id in sportive data : {WARNING} : {nb_missing_sports} found')
         if final_status == SUCCESS: final_status = WARNING
     else:
-        status.append(f'Expectation : Each employee has id in sportive data : {SUCCESS}')
+        details.append(f'Expectation : Each employee has id in sportive data : {SUCCESS}')
     
     if nb_extra_sports:
-        status.append(f'Expectation : No orphan ids in sportive data : {WARNING} : {nb_extra_sports} found')
+        details.append(f'Expectation : No orphan ids in sportive data : {WARNING} : {nb_extra_sports} found')
         if final_status == SUCCESS: final_status = WARNING
     else:
-        status.append(f'Expectation : No orphan ids in sportive data : {SUCCESS}')
+        details.append(f'Expectation : No orphan ids in sportive data : {SUCCESS}')
 
     if nb_extra_declared_sports:
-        status.append(f'Expectation : No orphan ids with declared sport in sportive data : {FAILED}')
-        status.append("{SP2}Invalid values list :\n  - ")
+        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {FAILED}')
+        details.append(f"Invalid values list :\n  - ")
 
         for index, sport_row in df_extra_declared_sports.iterrows():
-            status.append(f"{SP4}- {sport_row['sport_type']}")
+            details.append(f"{SP4}- {sport_row['sport_type']}")
         final_status = FAILED
     else:
-        status.append(f'Expectation : No orphan ids with declared sport in sportive data : {SUCCESS}')
+        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {SUCCESS}')
 
-    k_output = f"{SP2}\n- ". join(status)
-    kestra_output('detail', f"{k_output}")
-    kestra_output('status', final_status)
+    
+    ct.kestra_output('detail', details, f"{SP2}- ", lf=True)
+    ct.kestra_output('status', final_status)
 
     if final_status == SUCCESS:
         logger.info(f"Succeed to validate merge data.")
@@ -489,23 +502,20 @@ def load_pg(merge_file_parquet):
 
     df_merge = pd.read_parquet(merge_file_parquet)
     
-    # RGPD : Pseudonymisation of ID
-    # On utilise un sel (salt) pour que le hash ne soit pas devinable facilement
-    salt = "SDS_2024_CONFIDENTIAL"
-    df_merge['id'] = df_merge['id'].apply(
-        lambda x: hashlib.sha256(f"{x}{salt}".encode()).hexdigest()[:12]
-    )    
+    details = []
     cols_to_drop = ['margin_kms']
+
     df_merge.drop(columns = cols_to_drop, inplace= True)
-    colnames = "  Fields names\n  "
-    colnames += ", ".join(df_merge.columns.to_list())
+    details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
+    details.append(f"Merge loading to PostgreSQL")
+    details.append("Fields names : " + " - ".join(df_merge.columns.to_list()))
+    ct.kestra_output('detail', details, f"{SP2}- ", lf=True)
+
     try : 
         df_merge.to_sql('employees', engine, if_exists='replace', index=False)
-        geoloc_txt = "Active" if GEO_LOC else "Inactive"
-        kestra_output("geoloc", geoloc_txt)
-        kestra_output("cols", colnames)
-        kestra_output("shape", df_merge.shape)
-        kestra_output("status", SUCCESS)
+        ct.kestra_output("geoloc", GEO_LOC.capitalize())
+        ct.kestra_output("shape", df_merge.shape, sep= " X ", trail= False)
+        ct.kestra_output("status", SUCCESS)
     except Exception as e:
         logger.error(f"Error during loading {merge_file_parquet} to postgreSQL: {e}")
         raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
@@ -524,7 +534,7 @@ if __name__ == "__main__":
     action = sys.argv[1]
     #MAX_ROWS = 10
     BASE_DIR = Path(__file__).parent.parent.parent
-    KESTRA_MODE = False
+    ct.KESTRA_MODE = False
 
     if action == "extract-hr":
         extract_xlsx('hr',f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/kestra/tmp/hr_raw.parquet")
@@ -535,9 +545,9 @@ if __name__ == "__main__":
     if action == "extract-sport":
         extract_xlsx('sport',f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/sport_raw.parquet")
     elif action == "transform-sport":
-        transform_sport(f"{BASE_DIR}/kestra/tmp/sport_raw.parquet", f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.json")
+        transform_sport(f"{BASE_DIR}/kestra/tmp/sport_raw.parquet", f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "validate-sport":
-        validate_sport(f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.json")
+        validate_sport(f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "merge":
         merge_hr_sport(f"{BASE_DIR}/kestra/tmp/hr_processed.parquet",f"{BASE_DIR}/kestra/tmp/sport_processed.parquet",f"{BASE_DIR}/kestra/tmp/merge.parquet")        
     elif action == "validate-merge":
