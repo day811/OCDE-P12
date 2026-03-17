@@ -9,7 +9,8 @@ import fastparquet
 import uuid
 from typing import List, Dict, Any, Optional
 from sqlalchemy import create_engine, text, engine as Pse
-import logging, os
+import logging, os, sys
+
 
  #--- Configuration du Logging ---
 logging.basicConfig(
@@ -129,6 +130,34 @@ def run_generation(
     # Integration with Kestra context
     ct.kestra_output('activities_path',  output_parquet)
 
+def ingest_activities(incoming_activities_parquet: str, output_file: str, excel_sport_file: str) -> None:
+    """
+    Ingestes activities comming from stra
+
+    Args:
+        raw_file_parquet: Path to the raw sportive Parquet file.
+        output_file: Path for the normalized Parquet file.
+        excel_sport_file: Path to the sports reference Excel file.
+    """
+
+    logger.info(f"Start transforming sport raw data from : {incoming_activities_parquet}")
+
+    details = []
+    sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
+    df_inc_act = pd.read_parquet(incoming_activities_parquet)
+    df_inc_act['sport_type'] = df_inc_act['sport_type'].apply(sport_engine.get_normalized_sport)
+    details.append(f"Normalize and substitute sport names")
+
+    #df_inc_act.to_parquet(output_file)
+    ct.kestra_output("shape", df_inc_act.shape, sep= " X ", trail= False)
+
+    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
+
+    ct.kestra_output("status", ct.SUCCESS)
+    logger.info(f"End transforming incoming activities data into {output_file}")
+
+
+
 def load_pg(merge_file_parquet: str, truncate=False) -> None:
     """
     Loads the generated into the PostgreSQL 'activities' table.
@@ -142,20 +171,37 @@ def load_pg(merge_file_parquet: str, truncate=False) -> None:
     engine:Pse.Engine = create_engine(DATABASE_URL)
 
     df_activities = pd.read_parquet(merge_file_parquet)
+    # need to reformat in datetime for pg
+    df_activities['begin_date'] = pd.to_datetime(df_activities['begin_date'], unit='s', errors='coerce')
+    df_activities['end_date'] = pd.to_datetime(df_activities['end_date'], unit='s', errors='coerce')
     
     
     try : 
         with engine.begin() as conn:
             if truncate:
-                conn.execute(text("TRUNCATE TABLE activities")) 
-            df_activities.to_sql('activities', conn, if_exists='append', index=False)
+                conn.execute(text("TRUNCATE TABLE sports_activities")) 
+            df_activities.to_sql('sports_activities', conn, if_exists='append', index=False)
         ct.kestra_output("shape", df_activities.shape, sep= " X ", trail= False)
         ct.kestra_output("status", ct.SUCCESS)
     except Exception as e:
         logger.error(f"Error during loading {merge_file_parquet} to postgreSQL: {e}")
         raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
 
+def scan_gs_activities(output_file, bypass_file = ""):
 
+    keepon = bypass_file !="" and not bypass_file is None
+    if keepon:
+        cmd= f'cp "{bypass_file}" "{output_file}"'
+        os.system(cmd)
+
+    keepon = "YES" if keepon else "NO"
+    details = []
+    details.append(f"Bypass file : #{bypass_file}#")
+    details.append(f"Output file : #{output_file}#")
+    ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", trail=True)
+    ct.kestra_output("continue", keepon)
+    ct.kestra_output("status", ct.SUCCESS)
+    
 
 
 if __name__ == "__main__":
@@ -166,6 +212,10 @@ if __name__ == "__main__":
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
     if action == "rung_gen":
-        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 500)
+        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 10)
     elif action == "load_pg":
-        load_pg(f"{BASE_DIR}/kestra/tmp/activities.parquet")
+        load_pg(f"{BASE_DIR}/kestra/tmp/activities.parquet", truncate= False)
+    elif action == "scan":
+        scan_gs_activities(f"{BASE_DIR}/kestra/tmp/incoming_activities.parquet")
+    elif action == "scan_fake":
+        scan_gs_activities(f"{BASE_DIR}/kestra/tmp/incoming_activities.parquet",f"{BASE_DIR}/kestra/tmp/activities.parquet")        
