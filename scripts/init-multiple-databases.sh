@@ -36,13 +36,12 @@ EOSQL
 # Create sports activities table (no cross-DB FK constraint)
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS sports_activities (
-    id SERIAL PRIMARY KEY,
+    id uuid PRIMARY KEY,
     employee_id INTEGER,  
+    sport VARCHAR(50),
+    distance_meters INTEGER,
     begin_date TIMESTAMP,
     end_date TIMESTAMP,
-    sport_type VARCHAR(50),
-    distance_meters INTEGER,
-    duration_seconds INTEGER,
     comment TEXT
   );
 EOSQL
