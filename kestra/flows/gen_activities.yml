@@ -1,0 +1,74 @@
+id: gen_activities
+namespace: sds.infra
+description: Pipeline de génération d'activités et export multi-canal
+
+inputs:
+  - id: num_rows
+    type: INT
+    defaults: 2
+    description: "Number of activities to generate"
+
+  - id: target
+    type: SELECT
+    defaults: FAKE
+    values: [GSHEET, FAKE]
+    description: "Send to Google Sheet or Fake Google Scannin"
+
+  - id: truncate
+    type: BOOLEAN
+    defaults: false
+    description: "If sent to postgreSQL, erase table activities before"
+
+variables:
+  script_path: /app/scripts/
+  employees_sport: /app/data/sources/Données+Sportive.xlsx
+  xl_sports_file: /app/data/sources/strava_sports.xlsx
+
+
+tasks:
+  - id: generate
+    type: io.kestra.plugin.scripts.python.Commands
+    description: "Génération des activités sportives"
+    warningOnStdErr: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+    commands:
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'activities.parquet', '{{ vars.xl_sports_file }}', {{ inputs.num_rows }})"
+    outputFiles:
+      - "activities.parquet"
+
+  - id: case_dest
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ inputs.target }}"
+    cases:
+      FAKE:
+        - id: call_subflow
+          type: io.kestra.plugin.core.flow.Subflow
+          flowId: ingest_activities
+          namespace: sds.infra
+          inputs:
+            vars: "{{ inputs.truncate }}"
+            input_file: "{{ outputs.generate.outputFiles['activities.parquet'] }}"
+          wait: true
+          transmitFailed: true
+
+      GSHEET:
+        - id: export_gsheet
+          type: io.kestra.plugin.googleworkspace.sheets.Load
+          description: "Export vers Google Sheets via Plugin"
+#          from: "{{ outputs.generate.outputFiles['activities.parquet'] }}"
+          spreadsheetId: "{{ secret('GSHEET_ID') }}"
+          range: "Feuille1!A1"
+#          serviceAccount: "{{ secret('CRYPT_KEY') }}"
+          # Note: Le plugin gère la conversion Parquet -> Sheet automatiquement
+
+  - id: log_final
+    type: io.kestra.plugin.core.log.Log
+    message: |
+      ════════════════════════════════════════════════════════════
+      🚀 GENERATION COMPLETED
+      ════════════════════════════════════════════════════════════
+      📈 Truncate demandé : {{ inputs.truncate }}

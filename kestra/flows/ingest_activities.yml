@@ -1,0 +1,80 @@
+id: ingest_activities
+namespace: sds.infra
+description: Pipeline de génération d'activités et export multi-canal
+
+inputs:
+  - id: truncate
+    type: BOOLEAN
+    defaults: false
+    description: "If sent to postgreSQL, erase table activities before"
+  - id: input_file
+    type: FILE
+    required: false
+  
+
+
+variables:
+  script_path: /app/scripts/
+  xl_sports_file: /app/data/sources/strava_sports.xlsx
+
+
+tasks:
+  - id: start
+    type: io.kestra.plugin.core.debug.Return
+    format: "\"{{ taskrun.startDate }}\""
+
+  - id: scan_activities
+    type: io.kestra.plugin.scripts.python.Commands
+    description: "Scan GSheet or bypass activities"
+    warningOnStdErr: false
+    disabled: false
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    env:
+      CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+    commands:
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c """from gen_activities import scan_gs_activities; scan_gs_activities('incoming_activities.parquet', '{{ inputs.input_file}}')"
+    outputFiles:
+      - "incoming_activities.parquet"
+
+  - id: proceed_if_found
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.scan_activities.vars.continue == 'YES' }}"
+    then:
+      - id: important_processing
+        type: io.kestra.plugin.core.flow.Sequential
+        description: "On traite les données..."
+        tasks:
+        - id: trasnform_activities
+          type: io.kestra.plugin.scripts.python.Commands
+          description: "Incoming activities transforming"
+          warningOnStdErr: false
+          disabled: true
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          env:
+            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+          commands:
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c """from gen_activities import ingest_activities; ingest_activities('{{ inputs.incoming_activities}}', 'processed_activities.parquet')"
+
+
+        - id: load_pg
+          type: io.kestra.plugin.scripts.python.Commands
+          description: "Génération des activités sportives"
+          warningOnStdErr: false
+          disabled: true
+          taskRunner:
+            type: io.kestra.plugin.core.runner.Process
+          env:
+            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+          commands:
+            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+            - python -c """from gen_activities import load_pg; load_pg('outputs.generate.outputFiles["activities.parquet"]'""", {{ inputs.truncate }})"
+    else:
+      - id: log_nothing
+        type: io.kestra.plugin.core.log.Log
+        message: "Rien à faire, arrêt propre du flow."
+
+
