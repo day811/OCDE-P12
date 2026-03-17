@@ -18,6 +18,14 @@ logging.basicConfig(
 logger = logging.getLogger("sds.infra.common_tools")
 
 # --- Constants & Mappings ---
+FAILED = "❌&nbsp;Failed"
+WARNING = "⚠️&nbsp;Warning"
+SUCCESS = "✅&nbsp;Succes"
+SP2 = "&nbsp;"*2
+SP4 = "&nbsp;"*4
+
+
+
 SPORT_MAPPING: Dict[str, Any] = {
     'id': np.int32,
     'sport_type': object
