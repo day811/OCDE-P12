@@ -8,11 +8,21 @@ import common_tools as ct
 import fastparquet
 import uuid
 from typing import List, Dict, Any, Optional
+from sqlalchemy import create_engine, text, engine as Pse
+import logging, os
+
+ #--- Configuration du Logging ---
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout  
+    )
+logger = logging.getLogger("sds.infra.gen_activities")
 
 fake = Faker('fr_FR')
 
 ACT_VS_INACT = 2
-
+DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
 
 def run_generation(
     source_xlsx: str, 
@@ -119,9 +129,43 @@ def run_generation(
     # Integration with Kestra context
     ct.kestra_output('activities_path',  output_parquet)
 
+def load_pg(merge_file_parquet: str, truncate=False) -> None:
+    """
+    Loads the generated into the PostgreSQL 'activities' table.
+
+    Args:
+        merge_file_parquet: Path to the final Parquet file to load.
+        truncate: Boolean indicates if truncating before
+    """
+
+    logger.info(f"Start saving data to postgres  : {merge_file_parquet}")
+    engine:Pse.Engine = create_engine(DATABASE_URL)
+
+    df_activities = pd.read_parquet(merge_file_parquet)
+    
+    
+    try : 
+        with engine.begin() as conn:
+            if truncate:
+                conn.execute(text("TRUNCATE TABLE activities")) 
+            df_activities.to_sql('activities', conn, if_exists='append', index=False)
+        ct.kestra_output("shape", df_activities.shape, sep= " X ", trail= False)
+        ct.kestra_output("status", ct.SUCCESS)
+    except Exception as e:
+        logger.error(f"Error during loading {merge_file_parquet} to postgreSQL: {e}")
+        raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
+
+
+
+
 if __name__ == "__main__":
+    import sys
+    
+    action = sys.argv[1]
     # CLI parameters
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
-
-    run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 500)
+    if action == "rung_gen":
+        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 500)
+    elif action == "load_pg":
+        load_pg(f"{BASE_DIR}/kestra/tmp/activities.parquet")
