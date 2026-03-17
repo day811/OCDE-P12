@@ -35,11 +35,6 @@ if not DATABASE_URL:
 
 MAX_ROWS = None
 
-FAILED = "❌&nbsp;Failed"
-WARNING = "⚠️&nbsp;Warning"
-SUCCESS = "✅&nbsp;Succes"
-SP2 = "&nbsp;"*2
-SP4 = "&nbsp;"*4
 
 # GEOCODING INITIALIZATION
 
@@ -148,13 +143,13 @@ def extract_xlsx(file_type: str, file_path: str, output_file: str) -> None:
             df['last_name'] = df['last_name'].apply(ct.encrypt_text)    
             details.append("Crypt all last_names")
 
-            ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+            ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
         
         else:
             df = pd.read_excel(file_path, names= ct.SPORT_COLUMNS, dtype= ct.SPORT_MAPPING,header=0)
             
         df.to_parquet(output_file)
-        ct.kestra_output("status", SUCCESS)
+        ct.kestra_output("status", ct.SUCCESS)
         ct.kestra_output("shape", df.shape, sep= " X ", trail= False)
     except Exception as e:
         logger.error(f"Error during loading {file_path}: {e}")
@@ -174,7 +169,7 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
         expectations_list: List of GX expectation objects to run.
 
     Returns:
-        A tuple containing the global status (SUCCESS/WARNING/FAILED) and detailed logs.
+        A tuple containing the global status (ct.SUCCESS/ct.WARNING/ct.FAILED) and detailed logs.
     """
 
     context = gx.get_context()
@@ -195,38 +190,38 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
             
     validation_result = batch.validate(suite)
     
-    status = SUCCESS
+    status = ct.SUCCESS
     details = []
     for result in validation_result.results:
         if result.success:
-           details.append(f"Expectation : {result.expectation_config.get('description', '')} : {SUCCESS}")  # type: ignore
+           details.append(f"Expectation : {result.expectation_config.get('description', '')} : {ct.SUCCESS}")  # type: ignore
         else:
             flaws = result.result.get('partial_unexpected_list',[])
             flaws_index = result.result.get('partial_unexpected_index_list',[])
             severity = result.expectation_config.meta.get("severity", "critical")  # type: ignore
 
             if severity == "critical":
-                details.append(f"Expectation : {result.expectation_config.get('description',)} : {FAILED}")  # type: ignore
-                status = FAILED
+                details.append(f"Expectation : {result.expectation_config.get('description',)} : {ct.FAILED}")  # type: ignore
+                status = ct.FAILED
             else:
-                details.append(f"Expectation : {result.expectation_config.get('description',)} : {WARNING}")  # type: ignore
-                if status ==  SUCCESS: status = WARNING
+                details.append(f"Expectation : {result.expectation_config.get('description',)} : {ct.WARNING}")  # type: ignore
+                if status ==  ct.SUCCESS: status = ct.WARNING
             if len(flaws): 
                 if len(flaws_index):
-                    flaw_output = f"{SP4}Invalid values list :"
+                    flaw_output = f"{ct.SP4}Invalid values list :"
                     for index_flaw, flaw in zip(flaws_index,flaws):
                         employee = str(df.at[index_flaw, "id"])
-                        flaw_output +=  f"\n{SP4}- Employee : {employee} --> {str(flaw)}"       
+                        flaw_output +=  f"\n{ct.SP4}- Employee : {employee} --> {str(flaw)}"       
                 else:
-                    flaw_output = f"- Invalid values list :\n{SP4}- "
-                    flaw_output +=  f"\n{SP4}- ".join([str(flaw) for flaw in flaws])
+                    flaw_output = f"- Invalid values list :\n{ct.SP4}- "
+                    flaw_output +=  f"\n{ct.SP4}- ".join([str(flaw) for flaw in flaws])
 
                 details.append(f'{flaw_output}')
 
-    if status == SUCCESS:
+    if status == ct.SUCCESS:
         logger.info(f"Succeed to validate {suite_name} data with gX.")
-    elif status == WARNING:
-        # SPECIFIC CASE : no errors except  WARNINGS
+    elif status == ct.WARNING:
+        # SPECIFIC CASE : no errors except  ct.WARNINGS
         logger.warning(f"Warning during {suite_name} validation with gX")
     else:
         # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
@@ -332,12 +327,12 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     df_rh.drop(columns = cols_to_drop, inplace= True)
     details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
 
-    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
 
     df_rh.to_parquet(output_file)
     ct.kestra_output("shape", df_rh.shape, sep= " X ", trail= False)
 
-    ct.kestra_output("status", SUCCESS)
+    ct.kestra_output("status", ct.SUCCESS)
     logger.info(f"End transforming HR raw data into {output_file}")
 
 
@@ -370,7 +365,7 @@ def validate_hr(processed_file_parquet: str) -> None:
     min_salary = 15000
     max_salary = 150000
 
-    distance_rule = f"{SP2}\n{SP4}- " + f"{SP2}\n{SP4}- ".join([f"{index} <= {TRANSPORT_LIMIT[index]}kms" for index in TRANSPORT_LIMIT.keys()]) + f"{SP2}\n"
+    distance_rule = f"{ct.SP2}\n{ct.SP4}- " + f"{ct.SP2}\n{ct.SP4}- ".join([f"{index} <= {TRANSPORT_LIMIT[index]}kms" for index in TRANSPORT_LIMIT.keys()]) + f"{ct.SP2}\n"
     contract_rule = f"[{','.join(CONTRACT_TYPES)}]"
     transport_rule = f"\n[{' , '.join(ALL_TRANSPORTS)}]\n"
 
@@ -403,8 +398,8 @@ def validate_hr(processed_file_parquet: str) -> None:
     status, new_details = validate_dataframe(df_rh, "HR_Data", hr_expectations)
     details += new_details
     ct.kestra_output('status', status)
-    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
-    if status == FAILED:
+    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
+    if status == ct.FAILED:
         raise ValueError(f"HR Employees data quality not sufficient (Critical error).")
 
     logger.info(f"End validating HR data  : {processed_file_parquet}")
@@ -436,9 +431,9 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
     df_sport.to_parquet(output_file)
     ct.kestra_output("shape", df_sport.shape, sep= " X ", trail= False)
 
-    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
+    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
 
-    ct.kestra_output("status", SUCCESS)
+    ct.kestra_output("status", ct.SUCCESS)
     logger.info(f"End transforming sport raw data into {output_file}")
 
 
@@ -472,8 +467,8 @@ def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
 
     status, details = validate_dataframe(df_sport, "Sport_Data", hr_expectations)
     ct.kestra_output('status', status)
-    ct.kestra_output("detail", details,sep=f"{SP2}- ",lf=True )
-    if status == FAILED:
+    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
+    if status == ct.FAILED:
         raise ValueError(f"HR sportive data quality not sufficient (Critical error).")
 
 
@@ -502,7 +497,7 @@ def merge_hr_sport(hr_file_path: str, sport_file_path: str, output_file: str) ->
     
     df_final.to_parquet(output_file)
     ct.kestra_output("shape", df_final.shape, sep= " X ", trail= False)
-    ct.kestra_output("status", SUCCESS)
+    ct.kestra_output("status", ct.SUCCESS)
     logger.info(f"End transforming HR raw data into {output_file}")
 
 
@@ -535,45 +530,45 @@ def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> N
     df_extra_declared_sports = df_extra_sports[df_extra_sports['sport_type_y'].notnull()]
     nb_extra_declared_sports:int = len(df_extra_declared_sports)
     details = []
-    final_status = SUCCESS
+    final_status = ct.SUCCESS
 
     lost_employees = nb_employees-nb_merge
     if lost_employees:
-        details.append(f'Expectation : Keep all {nb_employees} employees  in merge file : {FAILED} : {lost_employees} lost')
-        final_status = FAILED
+        details.append(f'Expectation : Keep all {nb_employees} employees  in merge file : {ct.FAILED} : {lost_employees} lost')
+        final_status = ct.FAILED
     else:
-        details.append(f'Expectation : Keep all {nb_employees} employees in merge file : {SUCCESS}')
+        details.append(f'Expectation : Keep all {nb_employees} employees in merge file : {ct.SUCCESS}')
 
     if nb_missing_sports:
-        details.append(f'Expectation : Each employee has id in sportive data : {WARNING} : {nb_missing_sports} found')
-        if final_status == SUCCESS: final_status = WARNING
+        details.append(f'Expectation : Each employee has id in sportive data : {ct.WARNING} : {nb_missing_sports} found')
+        if final_status == ct.SUCCESS: final_status = ct.WARNING
     else:
-        details.append(f'Expectation : Each employee has id in sportive data : {SUCCESS}')
+        details.append(f'Expectation : Each employee has id in sportive data : {ct.SUCCESS}')
     
     if nb_extra_sports:
-        details.append(f'Expectation : No orphan ids in sportive data : {WARNING} : {nb_extra_sports} found')
-        if final_status == SUCCESS: final_status = WARNING
+        details.append(f'Expectation : No orphan ids in sportive data : {ct.WARNING} : {nb_extra_sports} found')
+        if final_status == ct.SUCCESS: final_status = ct.WARNING
     else:
-        details.append(f'Expectation : No orphan ids in sportive data : {SUCCESS}')
+        details.append(f'Expectation : No orphan ids in sportive data : {ct.SUCCESS}')
 
     if nb_extra_declared_sports:
-        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {FAILED}')
+        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {ct.FAILED}')
         details.append(f"Invalid values list :\n  - ")
 
         for index, sport_row in df_extra_declared_sports.iterrows():
-            details.append(f"{SP4}- {sport_row['sport_type']}")
-        final_status = FAILED
+            details.append(f"{ct.SP4}- {sport_row['sport_type']}")
+        final_status = ct.FAILED
     else:
-        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {SUCCESS}')
+        details.append(f'Expectation : No orphan ids with declared sport in sportive data : {ct.SUCCESS}')
 
     
-    ct.kestra_output('detail', details, f"{SP2}- ", lf=True)
+    ct.kestra_output('detail', details, f"{ct.SP2}- ", lf=True)
     ct.kestra_output('status', final_status)
 
-    if final_status == SUCCESS:
+    if final_status == ct.SUCCESS:
         logger.info(f"Succeed to validate merge data.")
-    elif final_status == WARNING:
-        # SPECIFIC CASE : no errors except  WARNINGS
+    elif final_status == ct.WARNING:
+        # SPECIFIC CASE : no errors except  ct.WARNINGS
         logger.warning(f"Warning during merge validation ")
     else:
         # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
@@ -601,7 +596,7 @@ def load_pg(merge_file_parquet: str) -> None:
     details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
     details.append(f"Merge loading to PostgreSQL")
     details.append("Fields names : " + " - ".join(df_merge.columns.to_list()))
-    ct.kestra_output('detail', details, f"{SP2}- ", lf=True)
+    ct.kestra_output('detail', details, f"{ct.SP2}- ", lf=True)
 
     try : 
         with engine.begin() as conn:
@@ -609,7 +604,7 @@ def load_pg(merge_file_parquet: str) -> None:
             df_merge.to_sql('employees', conn, if_exists='append', index=False)
         ct.kestra_output("geoloc", str(GEO_LOC_MODE).capitalize())
         ct.kestra_output("shape", df_merge.shape, sep= " X ", trail= False)
-        ct.kestra_output("status", SUCCESS)
+        ct.kestra_output("status", ct.SUCCESS)
     except Exception as e:
         logger.error(f"Error during loading {merge_file_parquet} to postgreSQL: {e}")
         raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
