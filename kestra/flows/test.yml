@@ -1,0 +1,13 @@
+id: test
+namespace: sds.infra
+
+inputs:
+- id: bool1
+  type: INT
+  defaults: 1
+  displayName: "A boolean input displayed as a toggle."
+
+tasks:
+  - id: hello
+    type: io.kestra.plugin.core.log.Log
+    message: "nb : {{ inputs['bool1'] }}"
