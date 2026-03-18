@@ -4,14 +4,16 @@ description: Pipeline de génération d'activités et export multi-canal
 
 inputs:
   - id: truncate
-    type: BOOLEAN
-    defaults: false
-    description: "If sent to postgreSQL, erase table activities before"
+    type: SELECT
+    defaults: NO
+    values: [YES, NO]
+    description: "If YES, sent to postgreSQL, erase table activities before"
+
+
   - id: input_file
     type: FILE
     required: false
   
-
 
 variables:
   script_path: /app/scripts/
@@ -30,49 +32,53 @@ tasks:
     disabled: false
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
-    env:
-      CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c """from gen_activities import scan_gs_activities; scan_gs_activities('incoming_activities.parquet', '{{ inputs.input_file}}')"
+      - python -c "from gen_activities import scan_gs_activities; scan_gs_activities('activities_income.parquet', '{{ inputs.input_file}}')"
     outputFiles:
-      - "incoming_activities.parquet"
+      - "activities_income.parquet"
 
-  - id: proceed_if_found
-    type: io.kestra.plugin.core.flow.If
-    condition: "{{ outputs.scan_activities.vars.continue == 'YES' }}"
-    then:
-      - id: important_processing
+  - id: must_continue
+    type: io.kestra.plugin.core.flow.Switch
+    value: "{{ outputs.scan_activities.vars.continue }}"
+    cases:
+      YES:
+      - id: activities_processing
         type: io.kestra.plugin.core.flow.Sequential
         description: "On traite les données..."
         tasks:
-        - id: trasnform_activities
+        - id: transform_activities
           type: io.kestra.plugin.scripts.python.Commands
           description: "Incoming activities transforming"
           warningOnStdErr: false
-          disabled: true
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           env:
             CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from gen_activities import ingest_activities; ingest_activities('{{ inputs.incoming_activities}}', 'processed_activities.parquet')"
-
+            - python -c 'from gen_activities import transform_activities; transform_activities("{{outputs.scan_activities.outputFiles['activities_income.parquet'] }}", "activities_processed.parquet", "{{ vars.xl_sports_file }}")'
+          outputFiles:
+            - "activities_processed.parquet"
 
         - id: load_pg
           type: io.kestra.plugin.scripts.python.Commands
           description: "Génération des activités sportives"
           warningOnStdErr: false
-          disabled: true
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           env:
             CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+            DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from gen_activities import load_pg; load_pg('outputs.generate.outputFiles["activities.parquet"]'""", {{ inputs.truncate }})"
-    else:
+            - python -c 'from gen_activities import load_pg; load_pg("{{outputs.transform_activities.outputFiles['activities_processed.parquet'] }}", "{{ inputs.truncate }}")'
+
+        - id: log_final_log
+          type: io.kestra.plugin.core.log.Log
+          message: "End of pipeline"
+
+      NO:
       - id: log_nothing
         type: io.kestra.plugin.core.log.Log
         message: "Rien à faire, arrêt propre du flow."
