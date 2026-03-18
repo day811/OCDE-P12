@@ -8,7 +8,7 @@ from typing import Dict, Optional
 from datetime import datetime
 
 from engine import RAGEngine
-from src.utils.token_accounting import get_accounting
+from token_accounting import get_accounting
 from config import Config
 from engine import get_llm
 
