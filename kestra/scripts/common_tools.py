@@ -91,7 +91,7 @@ def decrypt_text(encrypted_text: Optional[str]) -> Optional[str]:
     except Exception as e:
         return f"Error: {e}"
     
-def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail: Any = True) -> None:
+def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail: Any = True, raw = False) -> None:
     """
     Handles variable output for Kestra context or standard CLI printing.
 
@@ -104,6 +104,9 @@ def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail
     """
     if not isinstance(values, list):
         values = [str(values)]
+    if raw:
+        Kestra.outputs({name: " ".join(values)})
+        return
     
     if isinstance(trail,str):
         final_txt = trail
