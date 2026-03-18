@@ -1,6 +1,5 @@
 kestra
 # Simulation et Manipulation de données ---
-Faker         # Génération de données aléatoires (Profils, dates, textes)
 pandas          # Manipulation de DataFrames et import CSV
 python-dotenv    # Gestion des variables d'environnement (Secrets Slack, DB)
 openpyxl  # Gestion des fichiers XL
@@ -19,3 +18,7 @@ great_expectations # Framework de tests de données (Expectations)
 
 # Géospatial (Gratuit via OpenStreetMap) ---
 geopy           # Géocodage (Nominatim) et calcul de distances géodésiques
+
+#Comment build
+mistralai
+genai
