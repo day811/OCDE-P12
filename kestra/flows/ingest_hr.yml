@@ -21,11 +21,11 @@ tasks:
         description: "ERP extract → transform  validate"
 
         tasks:
-
         - id: extract_hr
           type: io.kestra.plugin.scripts.python.Commands
           description: "Load RH data from Excel with retry"
           warningOnStdErr: false
+          allowFailure: true
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           retry:
@@ -37,38 +37,45 @@ tasks:
             CRYPT_KEY: "{{ secret('CRYPT_KEY')}}"
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('hr','{{ vars.employees_data }}', 'hr_raw.parquet')"
+            - python -c "from ingest_hr import load_hr_xlsx; load_hr_xlsx('{{ vars.employees_data }}', 'hr_raw.parquet')"
           outputFiles:
             - "hr_raw.parquet"
 
-        - id: transform_hr
-          type: io.kestra.plugin.scripts.python.Commands
-          description: " RH data treatment"
-          warningOnStdErr: false
-          env:
-            GOOGLE_MAPS_KEY: "{{ secret('GOOGLE_MAPS_KEY')}}"
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import transform_hr; transform_hr('{{ outputs.extract_hr.outputFiles["hr_raw.parquet"] }}', 'hr_processed.parquet')"""
-          outputFiles:
-            - "hr_processed.parquet"
+        - id: check_extract_hr_status
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ (outputs.extract_hr.vars.status | int) < 2 }}"
+          then:
+            - id: transform_hr
+              type: io.kestra.plugin.scripts.python.Commands
+              description: " RH data treatment"
+              warningOnStdErr: false
+              env:
+                GOOGLE_MAPS_KEY: "{{ secret('GOOGLE_MAPS_KEY')}}"
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              commands:
+                - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                - python -c """from ingest_hr import transform_hr; transform_hr('{{ outputs.extract_hr.outputFiles["hr_raw.parquet"] }}', 'hr_processed.parquet')"""
+              outputFiles:
+                - "hr_processed.parquet"
 
-        - id: validate_hr
-          type: io.kestra.plugin.scripts.python.Commands
-          description: " Sport data validation"
-          warningOnStdErr: false
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import validate_hr; validate_hr('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}')"""
+        - id: check_transform_hr_status
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs.transform_hr.status == 'SUCCESS' || outputs.transform_hr.status == 'WARNING'}}"
+          then:
+            - id: validate_hr
+              type: io.kestra.plugin.scripts.python.Commands
+              description: " Sport data validation"
+              warningOnStdErr: false
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              commands:
+                - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                - python -c """from ingest_hr import validate_hr; validate_hr('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}')"""
 
       - id: et_sport
         type: io.kestra.plugin.core.flow.Sequential
         description: "ERP extract → clean → dedup → validate"
-
         tasks:
 
         - id: extract_sport
@@ -82,69 +89,91 @@ tasks:
             maxAttempt: 3
             maxDuration: PT5M
             interval: PT15S
-          env:
-            HASH_SALT: "{{ secret('HASH_SALT')}}"
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c "from ingest_hr import extract_xlsx; extract_xlsx('sport','{{ vars.employees_sport }}', 'sport_raw.parquet')"
+            - python -c "from ingest_hr import load_sport_xlsx; load_sport_xlsx('{{ vars.employees_sport }}', 'sport_raw.parquet')"
           outputFiles:
             - "sport_raw.parquet"
 
-        - id: transform_sport
-          type: io.kestra.plugin.scripts.python.Commands
-          description: " Sport data transform"
-          warningOnStdErr: false
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import transform_sport; transform_sport('{{ outputs.extract_sport.outputFiles["sport_raw.parquet"] }}', 'sport_processed.parquet', '{{ vars.xl_sports_file}}')"""
-          outputFiles:
-            - "sport_processed.parquet"
+        - id: check_extract_sport_status
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs.extract_sport.status == 'SUCCESS' || outputs.extract_sport.status == 'WARNING'}}"
+          then:
+            - id: transform_sport
+              type: io.kestra.plugin.scripts.python.Commands
+              description: " Sport data transform"
+              warningOnStdErr: false
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              commands:
+                - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                - python -c """from ingest_hr import transform_sport; transform_sport('{{ outputs.extract_sport.outputFiles["sport_raw.parquet"] }}', 'sport_processed.parquet', '{{ vars.xl_sports_file}}')"""
+              outputFiles:
+                - "sport_processed.parquet"
 
-        - id: validate_sport
-          type: io.kestra.plugin.scripts.python.Commands
-          description: " Sport data validation"
-          warningOnStdErr: false
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import validate_sport; validate_sport('{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ vars.xl_sports_file}}')"""
+        - id: check_transform_sport_status
+          type: io.kestra.plugin.core.flow.If
+          condition: "{{ outputs.transform_sport.status == 'SUCCESS' || outputs.transform_sport.status == 'WARNING'}}"
+          then:
+            - id: validate_sport
+              type: io.kestra.plugin.scripts.python.Commands
+              description: " Sport data validation"
+              warningOnStdErr: false
+              taskRunner:
+                type: io.kestra.plugin.core.runner.Process
+              commands:
+                - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                - python -c """from ingest_hr import validate_sport; validate_sport('{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ vars.xl_sports_file}}')"""
 
-  - id: merge_hr_sport
-    type: io.kestra.plugin.scripts.python.Commands
-    description: " RH data treatment"
-    warningOnStdErr: false
-    taskRunner:
-      type: io.kestra.plugin.core.runner.Process
-    commands:
-      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c """from ingest_hr import merge_hr_sport; merge_hr_sport('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', 'merge.parquet')"""
-    outputFiles:
-      - "merge.parquet"
+  - id: check_hr_sport_status
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ (outputs.validate_hr.status == 'SUCCESS' || outputs.validate_hr.status == 'WARNING'}}) && ({{ (outputs.validate_sport.status == 'SUCCESS' || outputs.validate_sport.status == 'WARNING'}})"
+    then:
+      - id: merge_flow
+        type: io.kestra.plugin.core.flow.Sequential
+        description: "ERP extract → clean → dedup → validate"
+        tasks:
+          - id: merge_hr_sport
+            type: io.kestra.plugin.scripts.python.Commands
+            description: " RH data treatment"
+            warningOnStdErr: false
+            taskRunner:
+              type: io.kestra.plugin.core.runner.Process
+            commands:
+              - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+              - python -c """from ingest_hr import merge_hr_sport; merge_hr_sport('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', 'merge.parquet')"""
+            outputFiles:
+              - "merge.parquet"
 
-  - id: validate_merge
-    type: io.kestra.plugin.scripts.python.Commands
-    description: " Sport data validation"
-    warningOnStdErr: false
-    taskRunner:
-      type: io.kestra.plugin.core.runner.Process
-    commands:
-      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c """from ingest_hr import validate_merge; validate_merge('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
+          - id: check_merge_status
+            type: io.kestra.plugin.core.flow.If
+            condition: "{{ outputs.merge_hr_sport.status == 'SUCCESS' || outputs.merge_hr_sport.status == 'WARNING'}}"
+            then:
+              - id: validate_merge
+                type: io.kestra.plugin.scripts.python.Commands
+                description: " Sport data validation"
+                warningOnStdErr: false
+                taskRunner:
+                  type: io.kestra.plugin.core.runner.Process
+                commands:
+                  - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                  - python -c """from ingest_hr import validate_merge; validate_merge('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
 
-  - id: merge_to_pg
-    type: io.kestra.plugin.scripts.python.Commands
-    description: " Sport data validation"
-    warningOnStdErr: false
-    taskRunner:
-      type: io.kestra.plugin.core.runner.Process
-    env:
-      DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
-    commands:
-      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c """from ingest_hr import load_pg; load_pg('{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
+          - id: check_validate_merge_status
+            type: io.kestra.plugin.core.flow.If
+            condition: "{{ outputs.validate_merge.status == 'SUCCESS' || outputs.validate_merge.status == 'WARNING'}}"
+            then:
+              - id: merge_to_pg
+                type: io.kestra.plugin.scripts.python.Commands
+                description: " Sport data validation"
+                warningOnStdErr: false
+                taskRunner:
+                  type: io.kestra.plugin.core.runner.Process
+                env:
+                  DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
+                commands:
+                  - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+                  - python -c """from ingest_hr import load_pg; load_pg('{{ outputs.merge_hr_sport.outputFiles["merge.parquet"] }}')"""
 
   - id: duration_calc
     type: io.kestra.plugin.scripts.python.Script
@@ -176,30 +205,30 @@ tasks:
       ════════════════════════════════════════════════════════════
       📅 Start time     : {{ outputs.duration_calc.vars.start }}  
       ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
-      🧭 Geo location   : {{ outputs.merge_to_pg["vars"]["geoloc"] }} 
+      🧭 Geo location   : {{ outputs.transform_hr["vars"]["geoloc"] }} 
       &nbsp;  
       ════════════════════════════════════════════════════════════
-      👷 Employees xlsx loading : {{ outputs.extract_hr["vars"]["status"] }} : {{ outputs.extract_hr["vars"]["shape"] }}  
+      👷 Employees xlsx loading : {{ outputs.extract_hr["vars"]["result"] }} : {{ outputs.extract_hr["vars"]["shape"] }}  
       {{ outputs.extract_hr["vars"]["detail"] }}   
-      👷 Employees xlsx transforming : {{ outputs.transform_hr["vars"]["status"] }} : {{ outputs.transform_hr["vars"]["shape"] }}  
+      👷 Employees xlsx transforming : {{ outputs.transform_hr["vars"]["result"] }} : {{ outputs.transform_hr["vars"]["shape"] }}  
       {{ outputs.transform_hr["vars"]["detail"] }}  
-      👷 Employees xlsx validation : {{ outputs.validate_hr["vars"]["status"] }}  
+      👷 Employees xlsx validation : {{ outputs.validate_hr["vars"]["result"] }}  
       {{ outputs.validate_hr["vars"]["detail"] }}  
       &nbsp;
       &nbsp;
       ════════════════════════════════════════════════════════════
-      🏀 Sportive xlsx loading : {{ outputs.extract_sport["vars"]["status"] }} : {{ outputs.extract_sport["vars"]["shape"] }}  
-      🏀 Sportive xlsx transforming : {{ outputs.transform_sport["vars"]["status"] }} : {{ outputs.transform_sport["vars"]["shape"] }}  
+      🏀 Sportive xlsx loading : {{ outputs.extract_sport["vars"]["result"] }} : {{ outputs.extract_sport["vars"]["shape"] }}  
+      🏀 Sportive xlsx transforming : {{ outputs.transform_sport["vars"]["result"] }} : {{ outputs.transform_sport["vars"]["shape"] }}  
       {{ outputs.transform_sport["vars"]["detail"] }}  
-      🏀 Sportive xlsx validation : {{ outputs.validate_sport["vars"]["status"] }}   
+      🏀 Sportive xlsx validation : {{ outputs.validate_sport["vars"]["result"] }}   
       {{ outputs.validate_sport["vars"]["detail"] }}  
       &nbsp;
       &nbsp;
       ════════════════════════════════════════════════════════════
-      🔁 Employees and Sportive merging : {{ outputs.merge_hr_sport["vars"]["status"] }} : {{ outputs.merge_hr_sport["vars"]["shape"] }}  
-      🔁 Merge validation : {{ outputs.validate_merge["vars"]["status"] }} 
+      🔁 Employees and Sportive merging : {{ outputs.merge_hr_sport["vars"]["result"] }} : {{ outputs.merge_hr_sport["vars"]["shape"] }}  
+      🔁 Merge validation : {{ outputs.validate_merge["vars"]["result"] }} 
       {{ outputs.validate_merge["vars"]["detail"] }}  
-      🔁 Load merge to PostgreSQL : {{ outputs.merge_to_pg["vars"]["status"] }} : {{ outputs.merge_to_pg["vars"]["shape"]}}  
+      🔁 Load merge to PostgreSQL : {{ outputs.merge_to_pg["vars"]["result"] }} : {{ outputs.merge_to_pg["vars"]["shape"]}}  
       {{ outputs.merge_to_pg["vars"]["detail"] }} 
       &nbsp;
       ════════════════════════════════════════════════════════════

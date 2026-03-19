@@ -2,12 +2,17 @@ id: test
 namespace: sds.infra
 
 inputs:
-- id: bool1
-  type: INT
-  defaults: 1
-  displayName: "A boolean input displayed as a toggle."
-
+  - id: file
+    type: FILE
+    required: false
+  - id: serviceAccount
+    type: STRING
+    required: false
+    
 tasks:
-  - id: hello
-    type: io.kestra.plugin.core.log.Log
-    message: "nb : {{ inputs['bool1'] }}"
+  - id: load_data
+    type: io.kestra.plugin.googleworkspace.sheets.Read
+    dateTimeRender: SERIAL_NUMBER
+    spreadsheetId: "{{ secret('GSHEET_ID') }}"
+    store: true
+    serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"

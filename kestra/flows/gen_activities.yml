@@ -10,18 +10,10 @@ inputs:
 
   - id: target
     type: SELECT
-    defaults: FAKE
-    values: [GSHEET, FAKE]
-    description: "Send to Google Sheet or Fake Google Scannin"
+    defaults: LOCAL
+    values: [GSHEET, LOCAL]
+    description: "Send to Google Sheet or LOCAL Google Scannin"
 
-  - id: truncate
-    type: SELECT
-    defaults: NO
-    values: [YES, NO]
-    description: "If YES, sent to postgreSQL, erase table activities before"
-  - id: file
-    type: FILE
-    
 variables:
   script_path: /app/scripts/
   employees_sport: /app/data/sources/Données+Sportive.xlsx
@@ -39,34 +31,28 @@ tasks:
       CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'activities.parquet', '{{ vars.xl_sports_file }}', {{ inputs.num_rows }})"
+      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'fake_activities.xlsx', '{{ vars.xl_sports_file }}', {{ inputs.num_rows }})"
     outputFiles:
-      - "activities.parquet"
+      - "fake_activities.xlsx"
 
   - id: case_dest
     type: io.kestra.plugin.core.flow.Switch
     value: "{{ inputs.target }}"
     cases: 
-      FAKE:
-        - id: call_subflow
-          type: io.kestra.plugin.core.flow.Subflow
-          flowId: ingest_activities
-          namespace: sds.infra
-          inputs:
-            truncate: "{{ inputs.truncate }}"
-            input_file: "{{ outputs.generate.outputFiles['activities.parquet'] }}"
-          wait: true
-          transmitFailed: true
+      LOCAL:
+        - id: log_nothing
+          type: io.kestra.plugin.core.log.Log
+          message: "Rien à faire, arrêt propre du flow."
 
       GSHEET:
         - id: export_gsheet
           type: io.kestra.plugin.googleworkspace.sheets.Load
           description: "Export vers Google Sheets via Plugin"
           #format: parquet
-          #from: "{{ outputs.generate.outputFiles['activities.parquet'] }}"
+          #from: "{{outputs.generate.outputFiles['activities.xlsx']}}"
           spreadsheetId: "{{ secret('GSHEET_ID') }}"
           range: "Feuille1!A1"
-#          serviceAccount: "{{ secret('CRYPT_KEY') }}"
+          serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
           # Note: Le plugin gère la conversion Parquet -> Sheet automatiquement
 
   - id: log_final
