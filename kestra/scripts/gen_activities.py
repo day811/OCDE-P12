@@ -27,7 +27,7 @@ DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
 
 def run_generation(
     source_xlsx: str, 
-    output_parquet: str, 
+    output_excel: str, 
     excel_sport_file: str, 
     num_rows: int = 1200
 ) -> None:
@@ -104,7 +104,6 @@ def run_generation(
 
         fav_sport = selected_emp_row['sport_type']
         cur_activity={}
-        cur_activity['id'] = str(uuid.uuid1())
         cur_activity['employee_id'] = selected_emp_row['id']
 
         # Determine activity type: 85% chance to perform favorite sport if available
@@ -119,16 +118,18 @@ def run_generation(
             new_activity = cur_activity.copy()
             new_activity['distance_meters'] = perf['distance_meters']
             new_activity['begin_date'] = perf['begin_date']
-            new_activity['end_date'] = perf['end_date']
+            new_activity['duration_sec'] = perf['duration_sec']
+            new_activity['id'] = ct.make_activity_id(perf['begin_date'])
             final_activities.append(new_activity)
             nb_created +=1
 
     # 3. Data persistence and Kestra output
     df_result = pd.DataFrame(final_activities)
-    df_result.to_parquet(output_parquet, index=False)
+    df_result.sort_values('id', inplace=True)
+    df_result.to_excel(output_excel, index=False)
     
     # Integration with Kestra context
-    ct.kestra_output('activities_path',  output_parquet)
+    ct.kestra_output('activities_path',  output_excel)
 
 
 def gen_comments(rows):
@@ -191,7 +192,7 @@ def load_pg(processed_file: str, truncate_str: str) -> None:
     df_activities = pd.read_parquet(processed_file)
     # need to reformat in datetime for pg
     df_activities['begin_date'] = pd.to_datetime(df_activities['begin_date'], unit='s', errors='coerce')
-    df_activities['end_date'] = pd.to_datetime(df_activities['end_date'], unit='s', errors='coerce')
+#    df_activities['end_date'] = pd.to_datetime(df_activities['end_date'], unit='s', errors='coerce')
     
     
     try : 
@@ -199,29 +200,67 @@ def load_pg(processed_file: str, truncate_str: str) -> None:
             if truncate:
                 conn.execute(text("TRUNCATE TABLE sports_activities")) 
             df_activities.to_sql('sports_activities', conn, if_exists='append', index=False)
-        ct.kestra_output("shape", df_activities.shape, sep= " X ", trail= False)
-        ct.kestra_output("status", ct.SUCCESS)
+            ct.kestra_output("shape", df_activities.shape, sep= " X ", trail= False)
+            ct.kestra_output("status", ct.SUCCESS)
+
     except Exception as e:
         logger.error(f"Error during loading {processed_file} to postgreSQL: {e}")
         raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
 
-def scan_gs_activities(output_file, bypass_file = ""):
+def process_incoming_activities(incoming_xlsx, output_file):
 
+    try : 
+        details = []
+        logger.info(f"Start connection to postgres  : ")
+        engine:Pse.Engine = create_engine(DATABASE_URL)
+        df_incoming = ct.extract_xlsx(incoming_xlsx, names= ct.ACTIVITY_COLUMNS)
+        df_incoming['begin_date'] = pd.to_datetime(df_incoming['begin_date'])
+        df_incoming['id'] = df_incoming.apply(lambda row: ct.make_activity_id(row['begin_date']) if pd.isna(row['id']) else row['id'], axis=1)
+
+        df_incoming['fingerprint'] = pd.util.hash_pandas_object(df_incoming[ct.ACTIVITY_FINGERPRINT], index=False).astype(str)
+        df_incoming.to_parquet(output_file, index=False)
+
+    except Exception as e:
+        logger.error(f"Error during loading {incoming_xlsx} to postgreSQL: {e}")
+        raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
+
+    
+
+def scan_new_activities(incoming_activities):
+
+    logger.info(f"Start loading incoming data data  : {incoming_activities}")
+
+    df_inc_activities = pd.read_parquet(incoming_activities)
+    
     details = []
-    details.append(f"Bypass file : #{bypass_file}#")
-    details.append(f"Output file : #{output_file}#")
+    logger.info(f"Start connection to postgres  : ")
+    engine:Pse.Engine = create_engine(DATABASE_URL)
+    try : 
+        with engine.begin() as conn:
+                #conn.execute(text("TRUNCATE TABLE sports_activities")) 
+            df_old_activities = pd.read_sql(sql='SELECT id, fingerprint FROM sports_activities', con = conn)
+            details.append(f"Output file : #{incoming_activities}#")
 
-    bypass = bypass_file !="" and not bypass_file is None
-    if bypass:
-        cmd= f'cp "{bypass_file}" "{output_file}"'
-        os.system(cmd)
-    else:
-        bypass = False
+            is_identical = df_inc_activities[['id', 'fingerprint']].sort_values('id').equals(
+                df_old_activities[['id', 'fingerprint']].sort_values('id')
+            )
 
-    bypass = "YES" if bypass else "NO"
-    ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", trail=True)
-    ct.kestra_output("continue", bypass, raw=True)
-    ct.kestra_output("status", ct.SUCCESS)
+            if is_identical:
+                print("Aucun changement détecté.")
+            else:
+                print("Des changements ou de nouvelles lignes ont été trouvés.")
+
+
+            bypass = "NO" if is_identical else "YES"
+            ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", trail=True)
+            ct.kestra_output("continue", bypass, raw=True)
+            ct.kestra_output("status", ct.SUCCESS)
+    
+
+    except Exception as e:
+        logger.error(f"Error during loading {incoming_activities} to postgreSQL: {e}")
+        raise ConnectionError(f"Error during postgreSQL injection (Critical error).")
+
     
 
 
@@ -233,12 +272,12 @@ if __name__ == "__main__":
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
     if action == "rung_gen":
-        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/activities.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 10)
+        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/fake_activities.xlsx", f"{BASE_DIR}/data/sources/strava_sports.xlsx", 50)
     elif action == "load_pg":
         load_pg(f"{BASE_DIR}/kestra/tmp/activities_processed.parquet", truncate_str= "NO")
+    elif action == "preprocess":
+        process_incoming_activities(f"{BASE_DIR}/kestra/tmp/activities.xlsx", f"{BASE_DIR}/kestra/tmp/activities_income.parquet")
     elif action == "scan":
-        scan_gs_activities(f"{BASE_DIR}/kestra/tmp/activities_income.parquet")
-    elif action == "scan_fake":
-        scan_gs_activities(f"{BASE_DIR}/kestra/tmp/activities_income.parquet",f"{BASE_DIR}/kestra/tmp/activities.parquet") 
+        scan_new_activities( f"{BASE_DIR}/kestra/tmp/activities_income.parquet")
     elif action == "transform":
         transform_activities(f"{BASE_DIR}/kestra/tmp/activities_income.parquet",f"{BASE_DIR}/kestra/tmp/activities_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")        
