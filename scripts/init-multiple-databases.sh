@@ -35,15 +35,18 @@ EOSQL
 
 # Create sports activities table (no cross-DB FK constraint)
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
-  CREATE TABLE IF NOT EXISTS sports_activities (
-    id uuid PRIMARY KEY,
-    employee_id INTEGER,  
-    sport VARCHAR(50),
-    distance_meters INTEGER,
-    begin_date TIMESTAMP,
-    end_date TIMESTAMP,
-    comment TEXT
+  CREATE TABLE public.sports_activities (
+    id text NOT NULL,
+    employee_id int4 NULL,
+    sport varchar(50) NULL,
+    distance_meters int4 NULL,
+    begin_date timestamp NULL,
+    duration_sec int4 NULL,
+    comment text NULL,
+    fingerprint text NULL,
+    CONSTRAINT sports_activities_pkey PRIMARY KEY (id)
   );
+  CREATE UNIQUE INDEX sports_activities_fingerprint_idx ON public.sports_activities USING btree (fingerprint);
 EOSQL
 
 echo "✅ Databases and tables initialized successfully"
