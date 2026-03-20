@@ -1,6 +1,7 @@
 id: ingest_hr
 namespace: sds.infra
 description: Full pipeline for ingesting HR and sport data
+
 variables:
   employees_data: /app/data/sources/Données+RH.xlsx
   employees_sport: /app/data/sources/Données+Sportive.xlsx
@@ -43,7 +44,7 @@ tasks:
 
         - id: check_extract_hr_status
           type: io.kestra.plugin.core.flow.If
-          condition: "{{ (outputs.extract_hr.vars.status | int) < 2 }}"
+          condition: "{{ (outputs.extract_hr.vars.status == 'SUCCESS' or outputs.extract_hr.vars.status == 'WARNING') }}"
           then:
             - id: transform_hr
               type: io.kestra.plugin.scripts.python.Commands
@@ -61,7 +62,8 @@ tasks:
 
         - id: check_transform_hr_status
           type: io.kestra.plugin.core.flow.If
-          condition: "{{ outputs.transform_hr.status == 'SUCCESS' || outputs.transform_hr.status == 'WARNING'}}"
+          condition: "{{ (outputs.transform_hr.vars.status == 'SUCCESS' or outputs.transform_hr.vars.status == 'WARNING' ) }}"
+          allowFailure: true
           then:
             - id: validate_hr
               type: io.kestra.plugin.scripts.python.Commands
@@ -82,6 +84,7 @@ tasks:
           type: io.kestra.plugin.scripts.python.Commands
           description: "Load Sport data from Excel with retry"
           warningOnStdErr: false
+          allowFailure: true
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           retry:
@@ -97,7 +100,7 @@ tasks:
 
         - id: check_extract_sport_status
           type: io.kestra.plugin.core.flow.If
-          condition: "{{ outputs.extract_sport.status == 'SUCCESS' || outputs.extract_sport.status == 'WARNING'}}"
+          condition: "{{ (outputs.extract_sport.vars.status == 'SUCCESS') or (outputs.extract_sport.vars.status == 'WARNING') }}"
           then:
             - id: transform_sport
               type: io.kestra.plugin.scripts.python.Commands
@@ -113,12 +116,13 @@ tasks:
 
         - id: check_transform_sport_status
           type: io.kestra.plugin.core.flow.If
-          condition: "{{ outputs.transform_sport.status == 'SUCCESS' || outputs.transform_sport.status == 'WARNING'}}"
+          condition: "{{ (outputs.transform_sport.vars.status == 'SUCCESS' or outputs.transform_sport.vars.status == 'WARNING' ) }}"
           then:
             - id: validate_sport
               type: io.kestra.plugin.scripts.python.Commands
               description: " Sport data validation"
               warningOnStdErr: false
+              allowFailure: true
               taskRunner:
                 type: io.kestra.plugin.core.runner.Process
               commands:
@@ -127,11 +131,12 @@ tasks:
 
   - id: check_hr_sport_status
     type: io.kestra.plugin.core.flow.If
-    condition: "{{ (outputs.validate_hr.status == 'SUCCESS' || outputs.validate_hr.status == 'WARNING'}}) && ({{ (outputs.validate_sport.status == 'SUCCESS' || outputs.validate_sport.status == 'WARNING'}})"
+    condition: "{{ (outputs.validate_hr.vars.status == 'SUCCESS' or outputs.validate_hr.vars.status == 'WARNING' ) }}  and ({{ (outputs.validate_sport.vars.status == 'SUCCESS' or outputs.validate_sport.vars.status == 'WARNING' ) }}"
     then:
       - id: merge_flow
         type: io.kestra.plugin.core.flow.Sequential
         description: "ERP extract → clean → dedup → validate"
+        allowFailure: true
         tasks:
           - id: merge_hr_sport
             type: io.kestra.plugin.scripts.python.Commands
@@ -147,7 +152,7 @@ tasks:
 
           - id: check_merge_status
             type: io.kestra.plugin.core.flow.If
-            condition: "{{ outputs.merge_hr_sport.status == 'SUCCESS' || outputs.merge_hr_sport.status == 'WARNING'}}"
+            condition: "{{ (outputs.merge_hr_sport.vars.status == 'SUCCESS' or outputs.merge_hr_sport.vars.status == 'WARNING' ) }}"
             then:
               - id: validate_merge
                 type: io.kestra.plugin.scripts.python.Commands
@@ -161,7 +166,7 @@ tasks:
 
           - id: check_validate_merge_status
             type: io.kestra.plugin.core.flow.If
-            condition: "{{ outputs.validate_merge.status == 'SUCCESS' || outputs.validate_merge.status == 'WARNING'}}"
+            condition: "{{ (outputs.validate_merge.vars.status == 'SUCCESS' or outputs.validate_merge.vars.status == 'WARNING' ) }}"
             then:
               - id: merge_to_pg
                 type: io.kestra.plugin.scripts.python.Commands
