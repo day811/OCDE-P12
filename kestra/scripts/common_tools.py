@@ -18,18 +18,40 @@ logging.basicConfig(
 logger = logging.getLogger("sds.infra.common_tools")
 
 # --- Constants & Mappings ---
-FAILED = "❌&nbsp;Failed"
-WARNING = "⚠️&nbsp;Warning"
-SUCCESS = "✅&nbsp;Succes"
+SEVERITY = "severity"
+CRITICAL = "CRITICAL"
+WARNING = 'WARNING'
+SUCCESS= 'SUCCESS'
+KEEP_ROW = "Keep Row"
 SP2 = "&nbsp;"*2
-SP4 = "&nbsp;"*4
+SP4 = "&nbsp;"
+STATUS_TXT = {SUCCESS : "✅&nbsp;Success", WARNING : "⚠️&nbsp;Warning", CRITICAL : "❌&nbsp;Failed"}
 
 
 
 SPORT_MAPPING: Dict[str, Any] = {
-    'id': np.int32,
+    'id': object,
     'sport_type': object
 }
+MAX_ROWS = None
+# DATABASE MAPPING
+HR_MAPPING = {
+    'id' : object ,
+    'last_name'  :object,
+    'first_name' : object,
+    'birthday' : None,
+    'business_unit' : object,
+    'entry_date' : None,
+    'salary' : np.float64,
+    'employement_contract' :object,
+    'vacation_days': np.int32,
+    'address' : object,
+    'transport_mode' : object,
+}
+HR_COLUMNS = list(HR_MAPPING.keys())
+
+ACTIVITY_COLUMNS= ['employee_id','sport','distance_meters','begin_date','duration_sec','id']
+ACTIVITY_FINGERPRINT= ['employee_id','sport','distance_meters','begin_date','duration_sec']
 
 SPORT_COLUMNS: List[str] = list(SPORT_MAPPING.keys())
 
@@ -56,6 +78,35 @@ SP4 = "&nbsp;"*4
 
 CRYPT_KEY= os.getenv('CRYPT_KEY')
 cipher_suite = Fernet(CRYPT_KEY.encode()) # type: ignore
+
+def make_activity_id(activity_date:datetime):
+
+    return f"ACT-{activity_date.strftime('%Y%m%d-%H%M%S')}-{random.randint(0, 999):03d}"
+
+def make_exit_status(status):
+    exit_status = 0 if status == SUCCESS else 1
+      
+    return exit_status
+
+def extract_xlsx( file_path: str,  names= None, mapping= None, header=0, max_rows = MAX_ROWS) -> pd.DataFrame:
+    """
+    Extracts raw data from HR or Sport Excel files and converts them to Parquet format.
+    Includes encryption for sensitive HR fields (names and addresses).
+
+    Args:
+        file_type: Type of file to process ("hr" or "sport").
+        file_path: Path to the source Excel file.
+        output_file: Destination path for the generated Parquet file.
+    """
+
+    try :
+        df = pd.read_excel(file_path, names= names, dtype= mapping,header=header,nrows=max_rows)
+    except Exception as e:
+        logger.error(f"Error during loading {file_path}: {e}")
+        raise FileNotFoundError(f"File {file_path} not found (Critical error).")
+
+    logger.info(f"End extracting HR data from : {file_path}")
+    return df
 
 def encrypt_text(plain_text: Any) -> Optional[str]:
     """
@@ -105,29 +156,29 @@ def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail
     if not isinstance(values, list):
         values = [str(values)]
     if raw:
-        Kestra.outputs({name: " ".join(values)})
-        return
-    
-    if isinstance(trail,str):
-        final_txt = trail
-    elif trail == True:
-        final_txt = sep
+        final_txt =" ".join(values)
     else:
-        final_txt = ""
-    
-    if lf:
-        lf_txt = f"{SP2}\n" 
-        sep = lf_txt + sep
-    else:
-        lf_txt=""
+        if isinstance(trail,str):
+            final_txt = trail
+        elif trail == True:
+            final_txt = sep
+        else:
+            final_txt = ""
+        
+        if lf:
+            lf_txt = f"{SP2}\n" 
+            sep = lf_txt + sep
+        else:
+            lf_txt=""
 
-    final_txt += sep.join([ str(value) for value in values])
-    final_txt += lf_txt + SP2
+        final_txt += sep.join([ str(value) for value in values])
+        final_txt += lf_txt + SP2
     
     if KESTRA_MODE :
         Kestra.outputs({name: final_txt})
-    log_text = str(final_txt).replace("&nbsp;", " ")
-    logger.info(f"\n{name}: {log_text}")
+    if not raw :
+        final_txt = str(final_txt).replace("&nbsp;", " ")
+    logger.info(f"\n{name}: {final_txt}")
 
 
 def normalize_str(text: str) -> str:
@@ -259,7 +310,7 @@ class Sport_engine():
         for sport in self.sport_list:
             if norm_sport == normalize_str(sport):
                 return sport
-        return sport_name
+        return None
 
     
     def get_random_perfs(self, row: pd.Series, max_hours: int, max_repeat: int = 1) -> List[Dict[str, Any]]:
@@ -353,11 +404,9 @@ class Sport_engine():
         for i in range(0,vacation_repeat):
             duration_sec = perfs[i]['duration_sec']
             max_delay_sec = 3600 * nb - duration_sec
-            delay_sec = random.randint(0,max_delay_sec)
-            begin_date = datetime(chosen_year, chosen_month, chosen_date,min_start) + timedelta(days=i,seconds=delay_sec)
-            end_date = begin_date + timedelta(seconds=duration_sec)
-            perfs[i]['begin_date']= begin_date.timestamp()
-            perfs[i]['end_date']= end_date.timestamp()
+            delay_min = random.randint(0,max_delay_sec)//60
+            begin_date = datetime(chosen_year, chosen_month, chosen_date,min_start) + timedelta(days=i,minutes=delay_min)
+            perfs[i]['begin_date']= begin_date
 
         return perfs
 
