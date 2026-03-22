@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import fastparquet
-import os, time, sys
+import os, time, sys, warnings, io
 from typing import List, Any, Tuple, Optional
 from enum import Enum
 import logging
@@ -14,15 +14,32 @@ from geopy.geocoders import GoogleV3
 from geopy.extra.rate_limiter import RateLimiter
 import common_tools as ct
 
-            
-# --- Configuration du Logging ---
+# On ne met PAS de stream=sys.stdout ici
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  
-    )
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 logger = logging.getLogger("sds.infra.ingest_hr")
-logging.getLogger('sqlalchemy.engine').setLevel(logging.WARNING)
+logger.propagate = False # Évite de doubler les logs avec la config de base
+logger.setLevel(logging.INFO)
+
+# Handler 1 : Les INFOS vont vers STDOUT (Vert dans Kestra)
+h_info = logging.StreamHandler(sys.stdout)
+h_info.setLevel(logging.INFO)
+h_info.addFilter(lambda record: record.levelno <= logging.INFO) # Stricte INFO
+
+# Handler 2 : Les WARNINGS/ERRORS vont vers STDERR (Orange/Rouge dans Kestra)
+h_warn = logging.StreamHandler(sys.stderr)
+h_warn.setLevel(logging.WARNING) # Capte WARNING, ERROR, CRITICAL
+
+# Formatage
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+h_info.setFormatter(formatter)
+h_warn.setFormatter(formatter)
+
+logger.addHandler(h_info)
+logger.addHandler(h_warn)
 
 # --- Initialisation des Connexions ---
 # L'URL de la base de données est injectée via un secret Kestra dans les variables d'environnement
@@ -124,39 +141,48 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
     
     # Create context
     suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
+
+    stderr_backup = sys.stderr # On sauvegarde le vrai flux d'erreur
+    sys.stderr = io.StringIO()  # On redirige stderr vers un buffer vide en mémoire
     
     for expectation in expectations_list:
         # Ajout dynamique des attentes selon la configuration fournie
         # Exemple : exp_type = gx.expectations.ExpectColumnValuesToNotBeNull
         suite.add_expectation(expectation)
             
-    validation_result = batch.validate(suite)
+    try:
+        # L'appel qui génère la pollution
+        validation_result = batch.validate(suite)
+    finally:
+        sys.stderr = stderr_backup # On restaure le vrai flux d'erreur quoi qu'il arrive
+    
+    
     
     status = ct.SUCCESS
     details = []
     for result in validation_result.results:
-        severity = result.expectation_config.meta.get(ct.SEVERITY, ct.CRITICAL)  # type: ignore
+        severity = result.expectation_config.meta.get(ct.SEVERITY, ct.FAILED)  # type: ignore
         keep_row = result.expectation_config.meta.get(ct.KEEP_ROW, True) # type: ignore
         if result.success:
-           details.append(f"Expectation : {result.expectation_config.get('description', '')} ({severity}): {ct.STATUS_TXT[ct.SUCCESS]}")  # type: ignore
+           details.append(f"Expectation : {result.expectation_config.get('description', '')} ({severity}): {ct.SUCCESS}")  # type: ignore
         else:
             flaws = result.result.get('partial_unexpected_list',[])
             flaws_index = result.result.get('partial_unexpected_index_list',[])
 
-            if severity == ct.CRITICAL:
-                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.STATUS_TXT[ct.CRITICAL]}")  # type: ignore
-                status = ct.CRITICAL
+            if severity == ct.FAILED:
+                status = ct.FAILED
+                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.FAILED}")  # type: ignore
             else:
-                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.STATUS_TXT[ct.WARNING]}")  # type: ignore
+                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.WARNING}")  # type: ignore
                 if status ==  ct.SUCCESS: status = ct.WARNING
             if len(flaws): 
                 if len(flaws_index):
                     flaw_output = f"{ct.SP4}Invalid values list :"
                     for index_flaw, flaw in zip(flaws_index,flaws):
-                        employee = str(df.at[index_flaw, "id"])
-                        if not employee:
-                            employee = f"{str(df.at[index_flaw, 'last_name'])} {str(df.at[index_flaw, 'last_name'])}"
-                        flaw_output +=  f"\n{ct.SP4}- Employee : {employee} --> {str(flaw)}"       
+                        reference = str(df.at[index_flaw, "id"])
+                        if not reference or reference == "nan":
+                            reference = f"{str(df.loc[index_flaw, 'first_name'])} {str(df.loc[index_flaw, 'last_name'])}"
+                        flaw_output +=  f"\n{ct.SP4}- Employee : {reference} --> Ligne xlsx -> {str(index_flaw)}"       
                 else:
                     flaw_output = f"- Invalid values list :\n{ct.SP4}- "
                     flaw_output +=  f"\n{ct.SP4}- ".join([str(flaw) for flaw in flaws])
@@ -258,7 +284,7 @@ def load_hr_xlsx(file_path: str, output_file: str):
         df.to_parquet(output_file)
 
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
@@ -329,7 +355,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
 
         logger.info(f"End transforming HR raw data into {output_file}")    
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
@@ -338,6 +364,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     sys.exit(ct.make_exit_status(status))
 
     
+
 def get_hr_expectations():
 
     min_age = 16
@@ -360,7 +387,7 @@ def get_hr_expectations():
         gx.expectations.ExpectColumnValuesToBeUnique( # type: ignore
             column= "id", 
             description= "No duplicated ids",
-            meta={ ct.SEVERITY: ct.CRITICAL }, 
+            meta={ ct.SEVERITY: ct.FAILED }, 
             ), 
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "first_name", 
@@ -370,13 +397,13 @@ def get_hr_expectations():
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "last_name", 
             description= "No missing last_names",
-            meta={ ct.SEVERITY: ct.CRITICAL }, 
+            meta={ ct.SEVERITY: ct.FAILED }, 
             ),
         gx.expectations.ExpectColumnValuesToBeInSet( # type: ignore
             column= "transport_mode", 
             value_set= ALL_TRANSPORTS, 
             description= f"Transport mode is in the list :  {transport_rule}",
-            meta={ ct.SEVERITY: ct.CRITICAL }, 
+            meta={ ct.SEVERITY: ct.FAILED }, 
             ),
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
             column= "distance_kms", 
@@ -415,6 +442,7 @@ def get_hr_expectations():
         ]    
     return hr_expectations
 
+
 def validate_hr(processed_file_parquet: str) -> None:
     """
     Validates processed HR data against business rules using Great Expectations.
@@ -443,7 +471,8 @@ def validate_hr(processed_file_parquet: str) -> None:
         details += new_details
         logger.info(f"End validating HR data  : {processed_file_parquet}")
     except Exception as e:
-        status = ct.CRITICAL
+        logging.error( f"Critical Error : {e}")
+        status = ct.FAILED
 
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
@@ -451,9 +480,14 @@ def validate_hr(processed_file_parquet: str) -> None:
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
     
+
+
+
+
 ############################################
 # HR SPORT FUNCTIONS
 ############################################
+
 
 def load_sport_xlsx(file_path: str, output_file: str):
     
@@ -465,12 +499,13 @@ def load_sport_xlsx(file_path: str, output_file: str):
         df.to_parquet(output_file)
 
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
+
 
 
 def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: str) -> None:
@@ -500,7 +535,7 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
         ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
         logger.info(f"End transforming sport raw data into {output_file}")
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
         f"Error: {e}"
 
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
@@ -509,6 +544,7 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
     sys.exit(ct.make_exit_status(status))
 
  
+
 
 
 def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
@@ -541,7 +577,7 @@ def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
             gx.expectations.ExpectColumnValuesToBeUnique( # pyright: ignore[reportPrivateImportUsage]
                 column= "id",
                 description= "No duplicated ids", 
-                meta={ ct.SEVERITY: ct.CRITICAL }, 
+                meta={ ct.SEVERITY: ct.FAILED }, 
                 ),
             gx.expectations.ExpectColumnDistinctValuesToBeInSet( # pyright: ignore[reportPrivateImportUsage]
                 column= "sport_type", 
@@ -554,7 +590,7 @@ def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
         status, details = validate_dataframe(df_sport, "Sport_Data", hr_expectations)
         logger.info(f"End validating Sport data  : {processed_file_parquet}")
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("result", ct.STATUS_TXT[status])
@@ -566,6 +602,7 @@ def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
 ############################################
 # HR EMPLOYEES + SPORT FUNCTIONS
 ############################################
+
 
 def merge_hr_sport(hr_file_path: str, sport_file_path: str, output_file: str) -> None:
     """
@@ -587,12 +624,13 @@ def merge_hr_sport(hr_file_path: str, sport_file_path: str, output_file: str) ->
         shape= df_final.shape
         df_final.to_parquet(output_file)
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
+
 
 
 def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> None:
@@ -623,6 +661,7 @@ def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> N
 
         df_extra_sports = df_sports_test[df_sports_test['_merge'] == 'left_only']
         nb_extra_sports:int = len(df_extra_sports)
+        #nb_extra_sports_emps = 
 
         df_extra_declared_sports = df_extra_sports[df_extra_sports['sport_type_y'].notnull()]
         nb_extra_declared_sports:int = len(df_extra_declared_sports)
@@ -631,8 +670,8 @@ def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> N
 
         lost_employees = nb_employees-nb_merge
         if lost_employees:
-            details.append(f'Expectation : Keep all {nb_employees} employees  in merge file : {ct.CRITICAL} : {lost_employees} lost')
-            status = ct.CRITICAL
+            details.append(f'Expectation : Keep all {nb_employees} employees  in merge file {ct.FAILED} : {lost_employees} lost')
+            status = ct.FAILED
         else:
             details.append(f'Expectation : Keep all {nb_employees} employees in merge file : {ct.SUCCESS}')
 
@@ -649,22 +688,33 @@ def validate_merge(hr_parquet: str, sport_parquet: str, merge_parquet: str) -> N
             details.append(f'Expectation : No orphan ids in sportive data : {ct.SUCCESS}')
 
         if nb_extra_declared_sports:
-            details.append(f'Expectation : No orphan ids with declared sport in sportive data : {ct.CRITICAL}')
+            details.append(f'Expectation : No orphan ids with declared sport in sportive data : {ct.FAILED}')
             details.append(f"Invalid values list :\n  - ")
 
             for index, sport_row in df_extra_declared_sports.iterrows():
                 details.append(f"{ct.SP4}- {sport_row['sport_type']}")
-            status = ct.CRITICAL
+            status = ct.FAILED
         else:
             details.append(f'Expectation : No orphan ids with declared sport in sportive data : {ct.SUCCESS}')
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
+    if status == ct.SUCCESS:
+        logger.info(f"Succeed to validate merge data.")
+    elif status == ct.WARNING:
+        # SPECIFIC CASE : no errors except  ct.WARNINGS
+        logger.warning(f"Warning during merge data validation")
+    else:
+        # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
+        logger.error(f"Fail to validate merge data. : ")
+
+    
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
     
+
 
 def load_pg(merge_file_parquet: str) -> None:
     """
@@ -697,10 +747,10 @@ def load_pg(merge_file_parquet: str) -> None:
                 shape = df_merge.shape
         except Exception as e:
             logger.error(f"Error during loading {merge_file_parquet} to postgreSQL: {e}")
-            status = ct.CRITICAL
+            status = ct.FAILED
             
     except Exception as e:
-        status = ct.CRITICAL
+        status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("shape", (0,0), sep= " X ", trail= False)
