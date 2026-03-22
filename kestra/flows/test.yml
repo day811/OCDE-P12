@@ -2,17 +2,25 @@ id: test
 namespace: sds.infra
 
 inputs:
-  - id: file
-    type: FILE
-    required: false
-  - id: serviceAccount
+  - id: run_task
+    type: BOOLEAN
+    defaults: true
+  - id: sometext
     type: STRING
-    required: false
-    
+    defaults: Some Text
+
 tasks:
-  - id: load_data
-    type: io.kestra.plugin.googleworkspace.sheets.Read
-    dateTimeRender: SERIAL_NUMBER
-    spreadsheetId: "{{ secret('GSHEET_ID') }}"
-    store: true
-    serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
+  - id: main
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      {% if 2>1 %} inputs.sometext {% endif %}
+    runIf: "{{ inputs.run_task }}"
+
+  - id: fallback
+    type: io.kestra.plugin.core.debug.Return
+    format: fallback output
+
+outputs:
+  - id: flow_output
+    type: STRING
+    value: "{{ tasks.main.state != 'SKIPPED' ? outputs.main.value : outputs.fallback.value }}"
