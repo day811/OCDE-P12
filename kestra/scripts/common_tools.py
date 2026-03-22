@@ -19,13 +19,13 @@ logger = logging.getLogger("sds.infra.common_tools")
 
 # --- Constants & Mappings ---
 SEVERITY = "severity"
-CRITICAL = "CRITICAL"
+FAILED = "FAILED"
 WARNING = 'WARNING'
 SUCCESS= 'SUCCESS'
 KEEP_ROW = "Keep Row"
 SP2 = "&nbsp;"*2
 SP4 = "&nbsp;"
-STATUS_TXT = {SUCCESS : "✅&nbsp;Success", WARNING : "⚠️&nbsp;Warning", CRITICAL : "❌&nbsp;Failed"}
+STATUS_TXT = {SUCCESS : "✅&nbsp;Success", WARNING : "⚠️&nbsp;Warning", FAILED : "❌&nbsp;Failed"}
 
 
 
@@ -84,7 +84,7 @@ def make_activity_id(activity_date:datetime):
     return f"ACT-{activity_date.strftime('%Y%m%d-%H%M%S')}-{random.randint(0, 999):03d}"
 
 def make_exit_status(status):
-    exit_status = 0 if status == SUCCESS else 1
+    exit_status = 0 if status != FAILED else 1
       
     return exit_status
 
