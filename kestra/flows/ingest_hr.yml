@@ -16,7 +16,6 @@ tasks:
   - id: hr_sport_files
     type: io.kestra.plugin.core.flow.Parallel
     description: ET Files in parallel
-    allowFailure: true
     tasks:
       - id: et_hr
         type: io.kestra.plugin.core.flow.Sequential
@@ -47,7 +46,7 @@ tasks:
           type: io.kestra.plugin.scripts.python.Commands
           description: " RH data treatment"
           allowFailure: true
-          runIf: "{{ outputs.extract_hr.vars.status != 'CRITICAL' }}"
+          runIf: "{{ outputs.extract_hr.vars.status != 'FAILED' }}"
           env:
             GOOGLE_MAPS_KEY: "{{ secret('GOOGLE_MAPS_KEY') }}"
           taskRunner:
@@ -60,13 +59,13 @@ tasks:
 
         - id: transform_hr_status
           type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.transform_hr.state != 'SKIPPED' ? outputs.transform_hr.vars.status : 'CRITICAL'  }}"
+          format: "{{ tasks.transform_hr.state != 'SKIPPED' ? outputs.transform_hr.vars.status : 'FAILED'  }}"
 
         - id: validate_hr
           type: io.kestra.plugin.scripts.python.Commands
           description: " Sport data validation"
           allowFailure: true
-          runIf: "{{ outputs.transform_hr_status.value != 'CRITICAL' }}"
+          runIf: "{{ outputs.transform_hr_status.value != 'FAILED' }}"
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           commands:
@@ -75,7 +74,7 @@ tasks:
 
         - id: validate_hr_status
           type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.validate_hr.state != 'SKIPPED' ? outputs.validate_hr.vars.status : 'CRITICAL'  }}"
+          format: "{{ tasks.validate_hr.state != 'SKIPPED' ? outputs.validate_hr.vars.status : 'FAILED'  }}"
 
       - id: et_sport
         type: io.kestra.plugin.core.flow.Sequential
@@ -103,7 +102,7 @@ tasks:
           type: io.kestra.plugin.scripts.python.Commands
           description: " Sport data transform"
           allowFailure: true
-          runIf: "{{ outputs.extract_sport.vars.status != 'CRITICAL' }}"
+          runIf: "{{ outputs.extract_sport.vars.status != 'FAILED' }}"
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           commands:
@@ -114,13 +113,13 @@ tasks:
 
         - id: transform_sport_status
           type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.transform_sport.state != 'SKIPPED' ? outputs.transform_sport.vars.status : 'CRITICAL'  }}"
+          format: "{{ tasks.transform_sport.state != 'SKIPPED' ? outputs.transform_sport.vars.status : 'FAILED'  }}"
 
         - id: validate_sport
           type: io.kestra.plugin.scripts.python.Commands
           description: " Sport data validation"
           allowFailure: true
-          runIf: "{{ outputs.transform_sport_status.value != 'CRITICAL' }}"
+          runIf: "{{ outputs.transform_sport_status.value != 'FAILED' }}"
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           commands:
@@ -129,7 +128,7 @@ tasks:
 
         - id: validate_sport_status
           type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.validate_sport.state != 'SKIPPED' ? outputs.validate_sport.vars.status : 'CRITICAL'  }}"
+          format: "{{ tasks.validate_sport.state != 'SKIPPED' ? outputs.validate_sport.vars.status : 'FAILED'  }}"
 
 
   - id: merge_flow
@@ -141,7 +140,7 @@ tasks:
         type: io.kestra.plugin.scripts.python.Commands
         description: " RH data treatment"
         allowFailure: true
-        runIf: "{{ outputs.validate_sport_status.value != 'CRITICAL' and outputs.validate_hr_status.value != 'CRITICAL' }}"
+        runIf: "{{ outputs.validate_sport_status.value != 'FAILED' and outputs.validate_hr_status.value != 'FAILED' }}"
         taskRunner:
           type: io.kestra.plugin.core.runner.Process
         commands:
@@ -152,15 +151,14 @@ tasks:
 
       - id: merge_status
         type: io.kestra.plugin.core.debug.Return
-        format: "{{ tasks.merge_hr_sport.state != 'SKIPPED' ? outputs.merge_hr_sport.vars.status : 'CRITICAL'  }}"
+        format: "{{ tasks.merge_hr_sport.state != 'SKIPPED' ? outputs.merge_hr_sport.vars.status : 'FAILED'  }}"
 
 
       - id: validate_merge
         type: io.kestra.plugin.scripts.python.Commands
         description: " Sport data validation"
-        warningOnStdErr: false
         allowFailure: true
-        runIf: "{{ outputs.merge_hr_sport.vars.status != 'CRITICAL' }}"
+        runIf: "{{ outputs.merge_status.value != 'FAILED' }}"
         taskRunner:
           type: io.kestra.plugin.core.runner.Process
         commands:
@@ -169,14 +167,13 @@ tasks:
 
       - id: validate_merge_status
         type: io.kestra.plugin.core.debug.Return
-        format: "{{ tasks.validate_merge.state != 'SKIPPED' ? outputs.validate_merge.vars.status : 'CRITICAL'  }}"
+        format: "{{ tasks.validate_merge.state != 'SKIPPED' ? outputs.validate_merge.vars.status : 'FAILED'  }}"
 
       - id: merge_to_pg
         type: io.kestra.plugin.scripts.python.Commands
         description: " Sport data validation"
-        warningOnStdErr: false
         allowFailure: true
-        runIf: "{{ outputs.validate_merge_status.value != 'CRITICAL'}}"
+        runIf: "{{ outputs.validate_merge_status.value != 'FAILED'}}"
         taskRunner:
           type: io.kestra.plugin.core.runner.Process
         env:
@@ -187,12 +184,12 @@ tasks:
 
       - id: merge_to_pg_status
         type: io.kestra.plugin.core.debug.Return
-        format: "{{ tasks.merge_to_pg.state != 'SKIPPED' ? outputs.merge_to_pg.vars.status : 'CRITICAL'  }}"
+        format: "{{ tasks.merge_to_pg.state != 'SKIPPED' ? outputs.merge_to_pg.vars.status : 'FAILED'  }}"
 
   - id: final_status
     type: io.kestra.plugin.core.debug.Return
     format: |
-      {{ tasks.merge_to_pg_status.state == 'SKIPPED' ? 'CRITICAL' : ((outputs.validate_hr_status.value == 'WARNING' or outputs.validate_sport_status.value == 'WARNING' or outputs.validate_merge_status.value == 'WARNING') ? 'WARNING' : 'SUCCESS')  }}
+      {{ tasks.merge_to_pg.state == 'SKIPPED' ? 'FAILED' : ((outputs.validate_hr_status.value == 'WARNING' or outputs.validate_sport_status.value == 'WARNING' or tasks.merge_flow.state == 'WARNING') ? 'WARNING' : 'SUCCESS')  }}
 
   - id: duration_calc 
     type: io.kestra.plugin.scripts.python.Script
@@ -219,61 +216,67 @@ tasks:
     format: |
       -
       ════════════════════════════════════════════════════════════
-      📊              PIPELINE EXECUTION {{ outputs.final_status.value }} &nbsp;
-      &nbsp;  
+      📊📊📊📊 PIPELINE EXECUTION RESULT : {{ outputs.final_status.value }} 📊📊📊📊
       ════════════════════════════════════════════════════════════&nbsp;  
       📅 Start time     : {{ outputs.duration_calc.vars.start }}  
       ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
       🧭 Geo location   : {{ outputs.transform_hr["vars"]["geoloc"] }} 
       &nbsp;  
-      &nbsp;  
       ════════════════════════════════════════════════════════════&nbsp;  
-                       EMPLOYEE PIPELINE {{ outputs.validate_hr.vars.result }}
+      👷👷👷👷  EMPLOYEE FLOW RESULT : {{ outputs.validate_hr_status.value }} 👷👷👷👷   
       ════════════════════════════════════════════════════════════&nbsp;  
       👷 Employees xlsx loading : {{ outputs.extract_hr.vars.result }} : {{ outputs.extract_hr.vars.shape }}   
       {{ outputs.extract_hr.vars.detail }}  
-      {% if outputs.extract_hr.vars.status != 'CRITICAL' %}  
+      {% if outputs.extract_hr.vars.status != 'FAILED' %}  
       &nbsp;
       👷 Employees xlsx transforming : {{ outputs.transform_hr.vars.result }} : {{ outputs.transform_hr.vars.shape }}   
       {{ outputs.transform_hr.vars.detail }} 
       {% endif %} 
-      {% if outputs.transform_hr_status.value != 'CRITICAL' %} 
+      {% if outputs.transform_hr_status.value != 'FAILED' %} 
       👷 Employees xlsx validation : {{ outputs.validate_hr.vars.result }}  
       {{ outputs.validate_hr.vars.detail }}  
       {% endif %}  
       &nbsp;
-      &nbsp;
       ════════════════════════════════════════════════════════════&nbsp;  
-                       sport PIPELINE {{ outputs.validate_sport.vars.result }}
+      🏀🏀🏀🏀   SPORT FLOW RESULT : outputs.validate_sport_status.status 🏀🏀🏀🏀   
       ════════════════════════════════════════════════════════════
       🏀 Sportive xlsx loading : {{ outputs.extract_sport.vars.result }} : {{ outputs.extract_sport.vars.shape }}  &nbsp;
       &nbsp;   
-      {% if outputs.extract_sport.vars.status != 'CRITICAL' %}     
+      {% if outputs.extract_sport.vars.status != 'FAILED' %}     
       🏀 Sportive xlsx transforming : {{ outputs.transform_sport.vars.result }} : {{ outputs.transform_sport.vars.shape }}  
       {{ outputs.transform_sport.vars.detail }}    
       {% endif %}  
-      {% if outputs.transform_sport_status.value != 'CRITICAL' %}    
+      {% if outputs.transform_sport_status.value != 'FAILED' %}    
       🏀 Sportive xlsx validation : {{ outputs.validate_sport.vars.result }}  
       {{ outputs.validate_sport.vars.detail }}    
       {% endif %}  
       &nbsp;
-      &nbsp; {% if (outputs.validate_sport_status.value != 'CRITICAL' and outputs.validate_hr_status.value != 'CRITICAL' )  %} 
+      &nbsp; {% if (outputs.validate_sport_status.value != 'FAILED' and outputs.validate_hr_status.value != 'FAILED' )  %} 
       ════════════════════════════════════════════════════════════&nbsp;  
-                       MERGE PIPELINE {{ outputs.validate_MERGE.vars.result }}
+      🔁🔁🔁🔁   MERGE FLOW RESULT{{ tasks.merge_flow.state }} 🔁🔁🔁🔁
       ════════════════════════════════════════════════════════════
       🔁 Employees and Sportive merging : {{ outputs.merge_hr_sport.vars.result }} : {{ outputs.merge_hr_sport.vars.shape }}  
       {% endif %} &nbsp;
       &nbsp;  
-      {% if outputs.merge_status.value != 'CRITICAL' %}   
+      {% if outputs.merge_status.value != 'FAILED' %}   
       🔁 Merge validation : {{ outputs.validate_merge.vars.result }} 
       {{ outputs.validate_merge.vars.detail }}   
       {% endif %} 
-      {% if outputs.validate_merge_status.value != 'CRITICAL' %} 
+      {% if outputs.validate_merge_status.value != 'FAILED' %} 
       🔁 Load merge to PostgreSQL : {{ outputs.merge_to_pg.vars.result }} : {{ outputs.merge_to_pg.vars.shape}}  
       {{ outputs.merge_to_pg.vars.detail }}  
       {% endif %} 
       &nbsp;
-      
+
+  - id: send_alert
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: error_handler
+    namespace: sds.infra
+    runIf: "{{ outputs.final_status.value != 'SUCCESS' }} "
+    inputs:
+      test: true
+      message: "{{outputs.final_log_txt.value}}"
+      status: "{{ outputs.final_status.value }}"
 
   - id: log_final
     type: io.kestra.plugin.core.log.Log

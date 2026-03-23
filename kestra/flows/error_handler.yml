@@ -1,21 +1,31 @@
 id: error_handler
 namespace: sds.infra
 description: "Centralisation des alertes pour le namespace"
+inputs:
+  - id: message
+    type: STRING
+    required: true
+    description: "Message to send"
+  - id: test
+    type: BOOLEAN
+    defaults: true
+  - id : status
+    type: STRING
+    defaults: WARNING
 
-triggers:
-  - id: on_failure
-    type: io.kestra.plugin.core.trigger.Flow
-    conditions:
-      - type: io.kestra.plugin.core.condition.ExecutionStatus
-        in: 
-          - FAILED
-      - type: io.kestra.plugin.core.condition.ExecutionNamespace
-        namespace: sds.infra
-        prefix: true
-    disabled: true
-    
 tasks:
-  - id: notify_slack
-    type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
-    url: "TON_WEBHOOK_URL"
-    payload: "Erreur détectée sur le flow {{ flow.id }}. Vérifiez Great Expectations !"
+  - id: check_test
+    type: io.kestra.plugin.core.flow.If
+    condition : "{{ inputs.test }}"
+    then :
+      - id: log_final
+        type: io.kestra.plugin.core.log.Log
+        message: |
+          {{ inputs.status }} ALERT MESSAGE : Abnormal termination of employee/sport pipeline : {{ inputs.status }}
+          &nbsp;
+          {{ inputs.message }}
+    else:
+      - id: notify_slack
+        type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+        url: "TON_WEBHOOK_URL"
+        payload: "Erreur détectée sur le flow {{ flow.id }}. Vérifiez Great Expectations !"
