@@ -39,6 +39,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'
     id text NOT NULL,
     employee_id int4 NULL,
     sport varchar(50) NULL,
+    location varchar(50) NULL,
     distance_meters int4 NULL,
     begin_date timestamp NULL,
     duration_sec int4 NULL,
