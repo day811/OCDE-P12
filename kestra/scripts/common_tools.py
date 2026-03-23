@@ -50,8 +50,8 @@ HR_MAPPING = {
 }
 HR_COLUMNS = list(HR_MAPPING.keys())
 
-ACTIVITY_COLUMNS= ['employee_id','sport','distance_meters','begin_date','duration_sec','id']
-ACTIVITY_FINGERPRINT= ['employee_id','sport','distance_meters','begin_date','duration_sec']
+ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id']
+ACTIVITY_FINGERPRINT= ['employee_id','sport', 'location', 'distance_meters','begin_date','duration_sec']
 
 SPORT_COLUMNS: List[str] = list(SPORT_MAPPING.keys())
 
@@ -61,7 +61,7 @@ VACATION: str = "vacation"
 WEIGHT: str = "weight"
 HOUR_RANGES: str = "hour_range"
 
-START_DATE: str = "2025-06-01"
+START_DATE = os.getenv('START_DATE',"2025-06-01")
 
 # Weighting and time slots for activity generation
 PERIOD_REPARTION: Dict[str, Dict[str, Any]] = {
@@ -100,7 +100,7 @@ def extract_xlsx( file_path: str,  names= None, mapping= None, header=0, max_row
     """
 
     try :
-        df = pd.read_excel(file_path, names= names, dtype= mapping,header=header,nrows=max_rows)
+        df = pd.read_excel(file_path, names= names, dtype= mapping,header=header,nrows=max_rows,engine='openpyxl')
     except Exception as e:
         logger.error(f"Error during loading {file_path}: {e}")
         raise FileNotFoundError(f"File {file_path} not found (Critical error).")
@@ -212,7 +212,7 @@ class Sport_engine():
     Core engine to handle sport activity logic, including duration, 
     distance calculations, and realistic scheduling.
     """
-    def __init__(self, excel_sport_file, start_date) -> None:
+    def __init__(self, excel_sport_file, start_date, excel_locations_file: str = "") -> None:
         """
         Initializes the engine by loading sport configurations.
         
@@ -220,11 +220,14 @@ class Sport_engine():
             excel_sport_file: Path to the CSV containing sport metrics and popularity.
             start_date_str: The baseline date for activity generation (YYYY-MM-DD).
         """
-        self.df: pd.DataFrame 
+        self.df: pd.DataFrame
+        self.locations_df: pd.DataFrame 
         self.sport_list = []
         self.strava_sport_list = []
         self.start_day = datetime.fromisoformat(start_date)
         self.load_sport_file(excel_sport_file)
+        if excel_locations_file:
+            self.load_locations_file(excel_locations_file)
        
 
     def make_aliases(self) -> None:
@@ -264,6 +267,31 @@ class Sport_engine():
             logger.error(f"Fail to load strava sports list : {excel_sport_file}")
             # En production, on pourrait isoler les lignes erronées ici
             raise FileNotFoundError(f"Fail to load strava sports list : {excel_sport_file}")
+        return True
+
+    def load_locations_file(self, excel_locations_file: str) -> bool:
+        """
+        Loads and validates the sports configuration from an Excel file.
+
+        Args:
+            excel_sport_file: Path to the Excel file to load.
+
+        Returns:
+            True if the file is loaded successfully.
+
+        Raises:
+            FileNotFoundError: If the file cannot be accessed or parsed.
+        """
+
+        logger.info(f"Start loading Strava Sports List  : {excel_locations_file}")
+    
+        try:
+    #        global SPORTS_LIST
+            self.locations_df = pd.read_excel(excel_locations_file)
+        except:
+            logger.error(f"Fail to load locations list : {excel_locations_file}")
+            # En production, on pourrait isoler les lignes erronées ici
+            raise FileNotFoundError(f"Fail to load locations list : {excel_locations_file}")
         return True
 
     def get_sports_list(self) -> List[str]:
@@ -307,12 +335,17 @@ class Sport_engine():
         if norm_sport in self.aliases.keys():
             return self.aliases[norm_sport]
         
-        for sport in self.sport_list:
+        for sport in self.get_sports_list():
             if norm_sport == normalize_str(sport):
                 return sport
         return None
 
-    
+    def get_random_location(self, sport:str):
+
+        
+        
+        location = ""
+
     def get_random_perfs(self, row: pd.Series, max_hours: int, max_repeat: int = 1) -> List[Dict[str, Any]]:
         """
         Generates random distance and duration metrics based on sport constraints.
@@ -426,6 +459,15 @@ class Sport_engine():
         row = cast(pd.Series, self.df.loc[sport_index])
         sport['sport'] = row['sport'] 
 
+        location_idx = row['location']
+        if np.isnan(location_idx):
+            location = random.choices(self.locations_df['location'].tolist(), k=1)[0]
+        else:
+            index= int(location_idx)
+            population = self.locations_df[self.locations_df['index'] == index]['location'].tolist()
+            location = random.choices(population, k=1)[0]
+
+        sport['location'] = location
         period, time_slot = self.get_activity_random_period_timeslot(row)
         max_hours = time_slot[1]
         chosen_repeat = random.randint(a=1, b=row['vacation_repeat']) if period == VACATION else 1
