@@ -4,6 +4,6 @@ data/*
 ~lock.*
 .vscode/*
 .env
-kestra/tmp/*
+data/tmp/*
 *kestra/scripts/__pycache__/*
 gdp_service_account.json
