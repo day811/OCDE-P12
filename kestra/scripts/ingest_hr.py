@@ -46,9 +46,6 @@ logger.addHandler(h_warn)
 
                       
 DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
-if not DATABASE_URL:
-    logger.error("La chaîne de connexion à la base de données est manquante.")
-    raise EnvironmentError("DB_CONNECTION_STRING non définie.")
 
 
 # GEOCODING INITIALIZATION
@@ -315,7 +312,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
         df_rh['address'] = df_rh['address'].apply(ct.decrypt_text)    
         details.append("Decrypt all addresses")
 
-        ct.kestra_output("geoloc", str(GEO_LOC_MODE).capitalize())
+        ct.kestra_output("geoloc", str(GEO_LOC_MODE.value).capitalize())
         df_rh['distance_kms'] = 0.0
         if GEO_LOC_MODE == GlocMode.Nobody:
             relevants = 0
@@ -777,20 +774,20 @@ if __name__ == "__main__":
     ct.KESTRA_MODE = False
 
     if action == "extract-hr":
-        load_hr_xlsx(f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/kestra/tmp/hr_raw.parquet")
+        load_hr_xlsx(f"{BASE_DIR}/data/sources/Données+RH.xlsx", f"{BASE_DIR}/data/tmp/hr_raw.parquet")
     elif action == "transform-hr":
-        transform_hr(f"{BASE_DIR}/kestra/tmp/hr_raw.parquet", f"{BASE_DIR}/kestra/tmp/hr_processed.parquet")
+        transform_hr(f"{BASE_DIR}/data/tmp/hr_raw.parquet", f"{BASE_DIR}/data/tmp/hr_processed.parquet")
     elif action == "validate-hr":
-        validate_hr(f"{BASE_DIR}/kestra/tmp/hr_processed.parquet")
+        validate_hr(f"{BASE_DIR}/data/tmp/hr_processed.parquet")
     if action == "extract-sport":
-        load_sport_xlsx(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/kestra/tmp/sport_raw.parquet")
+        load_sport_xlsx(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/sport_raw.parquet")
     elif action == "transform-sport":
-        transform_sport(f"{BASE_DIR}/kestra/tmp/sport_raw.parquet", f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
+        transform_sport(f"{BASE_DIR}/data/tmp/sport_raw.parquet", f"{BASE_DIR}/data/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "validate-sport":
-        validate_sport(f"{BASE_DIR}/kestra/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
+        validate_sport(f"{BASE_DIR}/data/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "merge":
-        merge_hr_sport(f"{BASE_DIR}/kestra/tmp/hr_processed.parquet",f"{BASE_DIR}/kestra/tmp/sport_processed.parquet",f"{BASE_DIR}/kestra/tmp/merge.parquet")        
+        merge_hr_sport(f"{BASE_DIR}/data/tmp/hr_processed.parquet",f"{BASE_DIR}/data/tmp/sport_processed.parquet",f"{BASE_DIR}/data/tmp/merge.parquet")        
     elif action == "validate-merge":
-        validate_merge(f"{BASE_DIR}/kestra/tmp/hr_processed.parquet", f"{BASE_DIR}/kestra/tmp/sport_processed.parquet",f"{BASE_DIR}/kestra/tmp/merge.parquet")
+        validate_merge(f"{BASE_DIR}/data/tmp/hr_processed.parquet", f"{BASE_DIR}/data/tmp/sport_processed.parquet",f"{BASE_DIR}/data/tmp/merge.parquet")
     elif action == "load-pg":
-        load_pg(f"{BASE_DIR}/kestra/tmp/merge.parquet")                
+        load_pg(f"{BASE_DIR}/data/tmp/merge.parquet")                
