@@ -14,10 +14,16 @@ inputs:
     values: [GSHEET, LOCAL]
     description: "Send to Google Sheet or LOCAL Google Scannin"
 
+  - id: start_date
+    type: STRING
+    defaults: 'None'
+    description: "Leave None or enter yyyy-mm-dd to overwrite default"
+
 variables:
   script_path: /app/scripts/
   employees_sport: /app/data/sources/Données+Sportive.xlsx
   xl_sports_file: /app/data/sources/strava_sports.xlsx
+  xl_locations_file: /app/data/sources/locations.xlsx
 
 
 tasks:
@@ -28,10 +34,11 @@ tasks:
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     env: 
+      START_DATE: "{{ inputs.start_date != 'None' ? inputs.start_date : envs.start_date}}"
       CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'fake_activities.xlsx', '{{ vars.xl_sports_file }}', {{ inputs.num_rows }})"
+      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'fake_activities.xlsx', '{{ vars.xl_sports_file }}', '{{ vars.xl_locations_file }}', {{ inputs.num_rows }})"
     outputFiles:
       - "fake_activities.xlsx"
 
@@ -61,4 +68,5 @@ tasks:
       ════════════════════════════════════════════════════════════
       🚀 GENERATION COMPLETED
       ════════════════════════════════════════════════════════════
-      📈 Truncate demandé : {{ inputs.truncate }}
+      📈 Fichier généré demandé : 'fake_activities.xlsx'
+         Taille des enrgeistrements : {{ outputs.generate.vars.shape}}
