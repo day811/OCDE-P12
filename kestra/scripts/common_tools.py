@@ -1,5 +1,5 @@
 import logging
-import sys, os
+import sys, os, io, warnings
 import pandas as pd
 import numpy as np
 import random
@@ -8,15 +8,12 @@ from datetime import datetime, timedelta
 import calendar
 from typing import List, Dict, Any, Tuple, Optional, cast
 from cryptography.fernet import Fernet
+import great_expectations as gx
 
 # --- Logging Configuration ---
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    stream=sys.stdout  
-)
-logger = logging.getLogger("sds.infra.common_tools")
 
+#logger = logging.getLogger("sds.infra.common_tools")
+logger:logging.Logger
 # --- Constants & Mappings ---
 SEVERITY = "severity"
 FAILED = "FAILED"
@@ -50,9 +47,9 @@ HR_MAPPING = {
 }
 HR_COLUMNS = list(HR_MAPPING.keys())
 
-ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id']
+RAW_ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id']
 ACTIVITY_FINGERPRINT= ['employee_id','sport', 'location', 'distance_meters','begin_date','duration_sec']
-
+PG_ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id', 'comment', 'fingerprint']
 SPORT_COLUMNS: List[str] = list(SPORT_MAPPING.keys())
 
 WEEK: str = "week"
@@ -100,7 +97,9 @@ def extract_xlsx( file_path: str,  names= None, mapping= None, header=0, max_row
     """
 
     try :
-        df = pd.read_excel(file_path, names= names, dtype= mapping,header=header,nrows=max_rows,engine='openpyxl')
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")        
+            df = pd.read_excel(file_path, names= names, dtype= mapping,header=header,nrows=max_rows,engine='openpyxl')
     except Exception as e:
         logger.error(f"Error during loading {file_path}: {e}")
         raise FileNotFoundError(f"File {file_path} not found (Critical error).")
@@ -206,6 +205,114 @@ def normalize_str(text: str) -> str:
         for accented_char in accented_chars:
             location = location.replace(accented_char, char)
     return location    
+
+
+
+def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: List[Any]) -> Tuple[pd.DataFrame,str, List[str], List[Dict]]:
+    """
+    Generic Great Expectations validation function using the WAP (Write-Audit-Publish) pattern.
+
+    Args:
+        df: The DataFrame to validate.
+        suite_name: Name of the expectation suite.
+        expectations_list: List of GX expectation objects to run.
+
+    Returns:
+        A tuple containing the global status (SUCCESS/WARNING/CRITICAL) and detailed logs.
+    """
+
+    context = gx.get_context()
+    
+    # Création d'une source de données Pandas éphémère pour GX
+    datasource = context.data_sources.add_pandas(name=f"ds_{suite_name}")
+    data_asset = datasource.add_dataframe_asset(name=f"asset_{suite_name}")
+    batch_definition = data_asset.add_batch_definition_whole_dataframe(f"batch_{suite_name}")
+    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
+    
+    # Create context
+    suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
+
+    stderr_backup = sys.stderr # On sauvegarde le vrai flux d'erreur
+    sys.stderr = io.StringIO()  # On redirige stderr vers un buffer vide en mémoire
+    
+    for expectation in expectations_list:
+        # Ajout dynamique des attentes selon la configuration fournie
+        # Exemple : exp_type = gx.expectations.ExpectColumnValuesToNotBeNull
+        suite.add_expectation(expectation)
+            
+    try:
+        # L'appel qui génère la pollution
+        validation_result = batch.validate(suite)
+    finally:
+        sys.stderr = stderr_backup # On restaure le vrai flux d'erreur quoi qu'il arrive
+  
+    
+    
+    status = SUCCESS
+    details = []
+    masks_to_delete= []
+    for result in validation_result.results:
+        severity = result.expectation_config.meta.get(SEVERITY, FAILED)  # type: ignore
+        keep_row = result.expectation_config.meta.get(KEEP_ROW, True) # type: ignore
+        column_name = result.expectation_config.kwargs.get("column") # type: ignore
+        if result.success:
+           details.append(f"Expectation : {result.expectation_config.get('description', '')} ({severity}): {SUCCESS}")  # type: ignore
+        else:
+            flaws = result.result.get('partial_unexpected_list',[])
+            flaws_index = result.result.get('partial_unexpected_index_list',[])
+
+            if severity == FAILED:
+                status = FAILED
+                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {FAILED}")  # type: ignore
+            else:
+                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {WARNING}")  # type: ignore
+                if status ==  SUCCESS: status = WARNING
+
+            if len(flaws): 
+                if len(flaws_index):
+                    flaw_output = f"{SP4}Invalid values list :"
+                    for index_flaw, flaw in zip(flaws_index,flaws):
+                        reference = None
+                        if not keep_row:
+                            #indexes_to_delete.add(int(index_flaw))    
+                            reference = str(df.at[index_flaw, "id"])
+                        if not reference or reference == "nan":
+                            reference = f"{str(df.loc[index_flaw, 'first_name'])} {str(df.loc[index_flaw, 'last_name'])}"
+                        flaw_output +=  f"\n{SP4}- Employee : {reference} --> Ligne xlsx -> {str(index_flaw)}"       
+                else:
+                    flaw_output = f"- Invalid values list :\n{SP4}- "
+                    flaw_output +=  f"\n{SP4}- {column_name} : ".join([str(flaw) for flaw in flaws])
+                    if not keep_row:
+                        flaw_dict = {'column' : column_name, 'values': flaws}
+                        masks_to_delete.append(flaw_dict)    
+
+                details.append(f'{flaw_output}')
+    
+    df_cleaned = pd.DataFrame()
+    if status != FAILED:
+        nb_deleted = len(masks_to_delete)
+        if nb_deleted:
+            for delete_mask in masks_to_delete:
+                column_to_mask = delete_mask['column']
+                mask = df[column_to_mask].isin(delete_mask['values'])
+                fields = {'id', 'employee_id', column_to_mask}
+                to_delete = df[mask][list(fields)].to_dict('records')
+                details.append(f"Deleted {nb_deleted} flawed activities : ")
+                details.extend(to_delete)
+                df_cleaned = df[~mask].copy()
+        else:
+            df_cleaned = df.copy()
+
+    if status == SUCCESS:
+        logger.info(f"Succeed to validate {suite_name} data with gX.")
+    elif status == WARNING:
+        # SPECIFIC CASE : no errors except  WARNINGS
+        logger.warning(f"Warning during {suite_name} validation with gX")
+        print(f"::warning:: Warning during {suite_name} validation with gX")
+    else:
+        # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
+        logger.error(f"Fail to validate {suite_name} with gX (Critical). : ")
+    return df_cleaned, status, details, list(masks_to_delete)
 
 class Sport_engine():
     """
