@@ -14,10 +14,13 @@ from geopy.geocoders import GoogleV3
 from geopy.extra.rate_limiter import RateLimiter
 import common_tools as ct
 
+
 # On ne met PAS de stream=sys.stdout ici
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(levelname)s - %(message)s'
+    stream=sys.stdout,
+    force=True  
 )
 
 logger = logging.getLogger("sds.infra.ingest_hr")
@@ -34,13 +37,14 @@ h_warn = logging.StreamHandler(sys.stderr)
 h_warn.setLevel(logging.WARNING) # Capte WARNING, ERROR, CRITICAL
 
 # Formatage
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(levelname)s - %(message)s')
 h_info.setFormatter(formatter)
 h_warn.setFormatter(formatter)
 
 logger.addHandler(h_info)
 logger.addHandler(h_warn)
 
+ct.logger=logger
 # --- Initialisation des Connexions ---
 # L'URL de la base de données est injectée via un secret Kestra dans les variables d'environnement
 
@@ -113,88 +117,6 @@ CONTRACT_TYPES = ['CDI','CDD']
 # COMMON FUNCTIONS
 ############################################
 
-
-
-def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: List[Any]) -> Tuple[str, List[str]]:
-    """
-    Generic Great Expectations validation function using the WAP (Write-Audit-Publish) pattern.
-
-    Args:
-        df: The DataFrame to validate.
-        suite_name: Name of the expectation suite.
-        expectations_list: List of GX expectation objects to run.
-
-    Returns:
-        A tuple containing the global status (ct.SUCCESS/ct.WARNING/ct.CRITICAL) and detailed logs.
-    """
-
-    context = gx.get_context()
-    
-    # Création d'une source de données Pandas éphémère pour GX
-    datasource = context.data_sources.add_pandas(name=f"ds_{suite_name}")
-    data_asset = datasource.add_dataframe_asset(name=f"asset_{suite_name}")
-    batch_definition = data_asset.add_batch_definition_whole_dataframe(f"batch_{suite_name}")
-    batch = batch_definition.get_batch(batch_parameters={"dataframe": df})
-    
-    # Create context
-    suite = context.suites.add(gx.ExpectationSuite(name=suite_name))
-
-    stderr_backup = sys.stderr # On sauvegarde le vrai flux d'erreur
-    sys.stderr = io.StringIO()  # On redirige stderr vers un buffer vide en mémoire
-    
-    for expectation in expectations_list:
-        # Ajout dynamique des attentes selon la configuration fournie
-        # Exemple : exp_type = gx.expectations.ExpectColumnValuesToNotBeNull
-        suite.add_expectation(expectation)
-            
-    try:
-        # L'appel qui génère la pollution
-        validation_result = batch.validate(suite)
-    finally:
-        sys.stderr = stderr_backup # On restaure le vrai flux d'erreur quoi qu'il arrive
-    
-    
-    
-    status = ct.SUCCESS
-    details = []
-    for result in validation_result.results:
-        severity = result.expectation_config.meta.get(ct.SEVERITY, ct.FAILED)  # type: ignore
-        keep_row = result.expectation_config.meta.get(ct.KEEP_ROW, True) # type: ignore
-        if result.success:
-           details.append(f"Expectation : {result.expectation_config.get('description', '')} ({severity}): {ct.SUCCESS}")  # type: ignore
-        else:
-            flaws = result.result.get('partial_unexpected_list',[])
-            flaws_index = result.result.get('partial_unexpected_index_list',[])
-
-            if severity == ct.FAILED:
-                status = ct.FAILED
-                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.FAILED}")  # type: ignore
-            else:
-                details.append(f"Expectation : {result.expectation_config.get('description',)}  ({severity}): {ct.WARNING}")  # type: ignore
-                if status ==  ct.SUCCESS: status = ct.WARNING
-            if len(flaws): 
-                if len(flaws_index):
-                    flaw_output = f"{ct.SP4}Invalid values list :"
-                    for index_flaw, flaw in zip(flaws_index,flaws):
-                        reference = str(df.at[index_flaw, "id"])
-                        if not reference or reference == "nan":
-                            reference = f"{str(df.loc[index_flaw, 'first_name'])} {str(df.loc[index_flaw, 'last_name'])}"
-                        flaw_output +=  f"\n{ct.SP4}- Employee : {reference} --> Ligne xlsx -> {str(index_flaw)}"       
-                else:
-                    flaw_output = f"- Invalid values list :\n{ct.SP4}- "
-                    flaw_output +=  f"\n{ct.SP4}- ".join([str(flaw) for flaw in flaws])
-
-                details.append(f'{flaw_output}')
-
-    if status == ct.SUCCESS:
-        logger.info(f"Succeed to validate {suite_name} data with gX.")
-    elif status == ct.WARNING:
-        # SPECIFIC CASE : no errors except  ct.WARNINGS
-        logger.warning(f"Warning during {suite_name} validation with gX")
-    else:
-        # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
-        logger.error(f"Fail to validate {suite_name} with gX (Critical). : ")
-    return status, details
 
 ############################################
 # HR EMPLOYEES FUNCTIONS
@@ -353,7 +275,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
         logger.info(f"End transforming HR raw data into {output_file}")    
     except Exception as e:
         status = ct.FAILED
-
+        logger.error(f"Abnormal termination of HR raw data transforming into {output_file}")    
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
     ct.kestra_output("shape", shape, sep= " X ", trail= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
@@ -440,7 +362,7 @@ def get_hr_expectations():
     return hr_expectations
 
 
-def validate_hr(processed_file_parquet: str) -> None:
+def validate_hr(processed_file_parquet: str, output_file) -> None:
     """
     Validates processed HR data against business rules using Great Expectations.
 
@@ -464,9 +386,13 @@ def validate_hr(processed_file_parquet: str) -> None:
         details.append("Decrypt all last names for validation")
 
         hr_expectations = get_hr_expectations()
-        status, new_details = validate_dataframe(df_rh, "HR_Data", hr_expectations)
+        df_cleaned , status, new_details, to_delete = ct.validate_dataframe(df_rh, "HR_Data", hr_expectations)
         details += new_details
         logger.info(f"End validating HR data  : {processed_file_parquet}")
+        shape= df_cleaned.shape
+        df_cleaned.to_parquet(output_file, index= False)
+        details.append(f"Save validated employees data to {output_file} : {ct.SUCCESS}")
+    
     except Exception as e:
         logging.error( f"Critical Error : {e}")
         status = ct.FAILED
@@ -544,7 +470,7 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
 
 
 
-def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
+def validate_sport(processed_file_parquet: str, output_file, excel_sport_file: str) -> None:
     """
     Checks that all declared sports in the file exist in the Strava reference list.
 
@@ -584,8 +510,12 @@ def validate_sport(processed_file_parquet: str, excel_sport_file: str) -> None:
                 ),
         ]    
 
-        status, details = validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+        df_cleaned, status, details, to_delete = ct.validate_dataframe(df_sport, "Sport_Data", hr_expectations)
         logger.info(f"End validating Sport data  : {processed_file_parquet}")
+        shape= df_cleaned.shape
+        df_cleaned.to_parquet(output_file, index= False)
+        details.append(f"Save validated employees data to {output_file} : {ct.SUCCESS}")
+ 
     except Exception as e:
         status = ct.FAILED
 
@@ -731,7 +661,7 @@ def load_pg(merge_file_parquet: str) -> None:
         shape = (0,0)
         details = []
         cols_to_drop = ['margin_kms']
-
+        df_merge['id'] = df_merge['id'].astype(str)
         df_merge.drop(columns = cols_to_drop, inplace= True)
         details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
         details.append(f"Merge loading to PostgreSQL")
@@ -778,15 +708,15 @@ if __name__ == "__main__":
     elif action == "transform-hr":
         transform_hr(f"{BASE_DIR}/data/tmp/hr_raw.parquet", f"{BASE_DIR}/data/tmp/hr_processed.parquet")
     elif action == "validate-hr":
-        validate_hr(f"{BASE_DIR}/data/tmp/hr_processed.parquet")
+        validate_hr(f"{BASE_DIR}/data/tmp/hr_processed.parquet",f"{BASE_DIR}/data/tmp/hr_cleaned.parquet")
     if action == "extract-sport":
         load_sport_xlsx(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/sport_raw.parquet")
     elif action == "transform-sport":
         transform_sport(f"{BASE_DIR}/data/tmp/sport_raw.parquet", f"{BASE_DIR}/data/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "validate-sport":
-        validate_sport(f"{BASE_DIR}/data/tmp/sport_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
+        validate_sport(f"{BASE_DIR}/data/tmp/sport_processed.parquet", f"{BASE_DIR}/data/tmp/sport_cleaned.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")
     elif action == "merge":
-        merge_hr_sport(f"{BASE_DIR}/data/tmp/hr_processed.parquet",f"{BASE_DIR}/data/tmp/sport_processed.parquet",f"{BASE_DIR}/data/tmp/merge.parquet")        
+        merge_hr_sport(f"{BASE_DIR}/data/tmp/hr_cleaned.parquet",f"{BASE_DIR}/data/tmp/sport_cleaned.parquet",f"{BASE_DIR}/data/tmp/merge.parquet")        
     elif action == "validate-merge":
         validate_merge(f"{BASE_DIR}/data/tmp/hr_processed.parquet", f"{BASE_DIR}/data/tmp/sport_processed.parquet",f"{BASE_DIR}/data/tmp/merge.parquet")
     elif action == "load-pg":
