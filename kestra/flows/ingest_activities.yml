@@ -1,6 +1,6 @@
 id: ingest_activities
 namespace: sds.infra
-description: Pipeline de génération d'activités et export multi-canal
+description: Ingestion pipeline of Google Sheet Data in postgreSQL DB
 
 
 
@@ -16,32 +16,73 @@ tasks:
 
   - id: load_sheet
     type: io.kestra.plugin.googleworkspace.sheets.Read
+    description: "Laod Google Sheet in ION"
     dateTimeRender: FORMATTED_STRING
     spreadsheetId: "{{ secret('GSHEET_ID') }}"
     store: true
     serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
+    allowFailure: true
+    retry:
+      type: constant
+      maxAttempt: 3
+      maxDuration: PT30S
+      interval: PT15S
 
   - id: convert_to_xlsx
     type: io.kestra.plugin.serdes.excel.IonToExcel
-    from: "{{ outputs.load_sheet['uris']['Activities'] }}" 
+    description: "Convert ION downloaded to xlsc"
+    from: "{{ outputs.load_sheet['uris']['Activities'] }}"
+    runIf: "{{ tasks.load_sheet.state == 'SUCCESS'}}" 
+    allowFailure: true
+    
+  - id: convert_to_xlsx_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ tasks.convert_to_xlsx.state != 'SKIPPED' ? 'SUCCESS' : 'FAILED'  }}"
 
-  - id: process_incoming_activities
+
+  - id: validate_incoming
     type: io.kestra.plugin.scripts.python.Commands
-    description: "Compute missing ids and fingerprint"
-    warningOnStdErr: false
+    description: "Check and clean incoming data with gX "
+    runIf: "{{ outputs.convert_to_xlsx_status.value == 'SUCCESS'}}"
+    allowFailure: true
+    env:
+      CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+      DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
+    taskRunner:
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+      - python -c 'from activity_worker import validate_incoming; validate_incoming("{{ outputs.convert_to_xlsx.uri}}", "activities_income.parquet")'
+    outputFiles:
+      - "activities_income.parquet"
+
+  - id: validate_incomings_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ tasks.validate_incoming.state != 'SKIPPED' ? outputs.validate_incoming.vars.status : 'FAILED'  }}"
+
+  - id: fingerprint_activities
+    type: io.kestra.plugin.scripts.python.Commands
+    description: "Compute incoming data fingerprints "
+    runIf: "{{ outputs.validate_incomings_status.value != 'FAILED'}}"
+    allowFailure: true
     disabled: false
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c 'from gen_activities import process_incoming_activities; process_incoming_activities("{{ outputs.convert_to_xlsx['uri']}}", "{{outputs.scan_activities.outputFiles['activities_income.parquet'] }}")'
+      - python -c 'from activity_worker import fingerprint_activities; fingerprint_activities("{{ outputs.validate_incoming.outputFiles['activities_income.parquet'] }}", "activities_fingerprint.parquet")'
     outputFiles:
-      - "activities_income.parquet"
+      - "activities_fingerprint.parquet"
+
+  - id: fingerprint_activities_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ tasks.fingerprint_activities.state != 'SKIPPED' ? outputs.fingerprint_activities.vars.status : 'FAILED'  }}"
 
   - id: scan_new_activities
     type: io.kestra.plugin.scripts.python.Commands
-    description: "Scan GSheet or bypass activities"
-    warningOnStdErr: false
+    description: "Compare fingerprints with pg data and store an action file"
+    runIf: "{{ outputs.fingerprint_activities_status.value == 'SUCCESS'}}"
+    allowFailure: true
     disabled: false
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
@@ -50,37 +91,46 @@ tasks:
       DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c 'from gen_activities import scan_new_activities; scan_new_activities( "{{outputs.scan_activities.outputFiles['activities_income.parquet'] }}")'
+      - python -c 'from activity_worker import scan_new_activities; scan_new_activities( "{{outputs.fingerprint_activities.outputFiles['activities_fingerprint.parquet'] }}", "actions.parquet")'
     outputFiles:
-      - "activities_income.parquet"
+      - "actions.parquet"
+    
+  - id: scan_new_activities_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ tasks.scan_new_activities.state != 'SKIPPED' ? outputs.scan_new_activities.vars.status : 'FAILED'  }}"
 
   - id: must_continue
     type: io.kestra.plugin.core.flow.Switch
+    description: "Check if scanner found actions to make"
     value: "{{ outputs.scan_new_activities.vars.continue }}"
+    runIf: "{{ outputs.scan_new_activities_status.value != 'FAILED'}}"
     cases:
       YES:
-      - id: activities_processing
+      - id: process_actions
         type: io.kestra.plugin.core.flow.Sequential
-        description: "On traite les données..."
+        description: "Generate comments for new and modified activities"
         tasks:
-        - id: transform_activities
+        - id: comment_activities
           type: io.kestra.plugin.scripts.python.Commands
-          description: "Incoming activities transforming"
-          warningOnStdErr: false
+          description: "Incoming activities commenting"
+          allowFailure: true
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
-          env:
-            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from gen_activities import transform_activities; transform_activities("{{outputs.scan_activities.outputFiles['activities_income.parquet'] }}", "activities_processed.parquet", "{{ vars.xl_sports_file }}")'
+            - python -c 'from activity_worker import comment_activities; comment_activities("{{outputs.scan_new_activities.outputFiles['actions.parquet'] }}", "activities_processed.parquet", "{{ vars.xl_sports_file }}")'
           outputFiles:
             - "activities_processed.parquet"
 
+        - id: comment_activities_status
+          type: io.kestra.plugin.core.debug.Return
+          format: "{{ tasks.comment_activities.state != 'SKIPPED' ? outputs.comment_activities.vars.status : 'FAILED'  }}"
+
         - id: load_pg
           type: io.kestra.plugin.scripts.python.Commands
-          description: "Génération des activités sportives"
-          warningOnStdErr: false
+          description: "Make update to PostgreSQL DB"
+          allowFailure: true
+          runIf: "{{ outputs.comment_activities_status.value == 'SUCCESS'}}"
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           env:
@@ -88,15 +138,70 @@ tasks:
             DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from gen_activities import load_pg; load_pg("{{outputs.transform_activities.outputFiles['activities_processed.parquet'] }}", "{{ inputs.truncate }}")'
+            - python -c 'from activity_worker import load_pg; load_pg("{{outputs.comment_activities.outputFiles['activities_processed.parquet'] }}")'
+        - id: load_pg_status
+          type: io.kestra.plugin.core.debug.Return
+          format: "{{ tasks.load_pg.state != 'SKIPPED' ? outputs.load_pg.vars.status : 'FAILED'  }}"
 
         - id: log_final_log
           type: io.kestra.plugin.core.log.Log
-          message: "End of pipeline"
+          message: |
+            Google Sheet Download : 
 
       NO:
       - id: log_nothing
         type: io.kestra.plugin.core.log.Log
         message: "Rien à faire, arrêt propre du flow."
+
+  - id: duration_calc 
+    type: io.kestra.plugin.scripts.python.Script
+    description: Execution time calculation
+
+    script: |
+      fin = "{{ taskrun.startDate }}"
+      from datetime import datetime
+      from kestra import Kestra
+
+      deb = {{ outputs.start.value }}
+      print(f"deb : {deb}") 
+      print(f"fin : {fin}")       
+      dt_deb = datetime.fromisoformat(deb.replace("Z", "+00:00"))
+      dt_fin = datetime.fromisoformat(fin.replace("Z", "+00:00"))
+      delta = dt_fin - dt_deb
+      Kestra.outputs( { 'total_time' : delta.total_seconds(), 'start' : str(dt_deb)})
+
+  - id: final_log_txt
+    type: io.kestra.plugin.core.debug.Return
+    format: |
+      -
+      ════════════════════════════════════════════════════════════
+      📊📊📊📊 ACTIVITIES INGESTION PIPELINE EXECUTION RESULT : {{ outputs.final_status.value }} 📊📊📊📊
+      ════════════════════════════════════════════════════════════&nbsp;  
+      📅 Start time     : {{ outputs.duration_calc.vars.start }}  
+      ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
+      &nbsp;  
+      ════════════════════════════════════════════════════════════&nbsp;  
+      💪💪💪💪  ACTIVITIES GSHEET LOAD AND ANALYSIS : {{ outputs.validate_hr_status.value }} 👷👷👷👷   
+      ════════════════════════════════════════════════════════════&nbsp;  
+      👷 Employees xlsx loading : {{ outputs.extract_hr.vars.result }} : {{ outputs.extract_hr.vars.shape }}   
+      {{ outputs.extract_hr.vars.detail }}  
+      {% if outputs.extract_hr.vars.status != 'FAILED' %}  
+      &nbsp;
+      👷 Employees xlsx transforming : {{ outputs.transform_hr.vars.result }} : {{ outputs.transform_hr.vars.shape }}   
+      {{ outputs.transform_hr.vars.detail }} 
+      {% endif %} 
+      {% if outputs.transform_hr_status.value != 'FAILED' %} 
+      👷 Employees xlsx validation : {{ outputs.validate_hr.vars.result }}  
+      {{ outputs.validate_hr.vars.detail }}  
+      {% endif %}  
+      &nbsp;
+
+  - id: final_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ outputs.scan_new_activities_status.value != 'FAILED' and ( outputs.scan_new_activities.vars.continue == 'NO' or (outputs.scan_new_activities.vars.continue == 'YES' and outputs.load_pg_status.value != 'FAILED' ))? 'SUCCESS' : 'FAILED' }}"
+
+  - id: set_final_status
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ outputs.final_status.value =='FAILED'}}"
 
 

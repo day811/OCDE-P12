@@ -70,7 +70,9 @@ tasks:
             type: io.kestra.plugin.core.runner.Process
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import validate_hr; validate_hr('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}')"""
+            - python -c """from ingest_hr import validate_hr; validate_hr('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', 'hr_cleaned.parquet')"""
+          outputFiles:
+            - "hr_cleaned.parquet"
 
         - id: validate_hr_status
           type: io.kestra.plugin.core.debug.Return
@@ -124,7 +126,9 @@ tasks:
             type: io.kestra.plugin.core.runner.Process
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c """from ingest_hr import validate_sport; validate_sport('{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', '{{ vars.xl_sports_file}}')"""
+            - python -c """from ingest_hr import validate_sport; validate_sport('{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', 'sport_cleaned.parquet', '{{ vars.xl_sports_file}}')"""
+          outputFiles:
+            - "sport_cleaned.parquet"
 
         - id: validate_sport_status
           type: io.kestra.plugin.core.debug.Return
@@ -145,7 +149,7 @@ tasks:
           type: io.kestra.plugin.core.runner.Process
         commands:
           - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-          - python -c """from ingest_hr import merge_hr_sport; merge_hr_sport('{{ outputs.transform_hr.outputFiles["hr_processed.parquet"] }}', '{{ outputs.transform_sport.outputFiles["sport_processed.parquet"] }}', 'merge.parquet')"""
+          - python -c """from ingest_hr import merge_hr_sport; merge_hr_sport('{{ outputs.validate_hr.outputFiles["hr_cleaned.parquet"] }}', '{{ outputs.validate_sport.outputFiles["sport_cleaned.parquet"] }}', 'merge.parquet')"""
         outputFiles:
           - "merge.parquet"
 
@@ -189,7 +193,7 @@ tasks:
   - id: final_status
     type: io.kestra.plugin.core.debug.Return
     format: |
-      {{ tasks.merge_to_pg.state == 'SKIPPED' ? 'FAILED' : ((outputs.validate_hr_status.value == 'WARNING' or outputs.validate_sport_status.value == 'WARNING' or tasks.merge_flow.state == 'WARNING') ? 'WARNING' : 'SUCCESS')  }}
+      {{ (outputs.merge_to_pg_status.value == 'FAILED')? 'FAILED' : ((outputs.validate_hr_status.value == 'WARNING' or outputs.validate_sport_status.value == 'WARNING' or tasks.merge_flow.state == 'WARNING') ? 'WARNING' : 'SUCCESS')  }}
 
   - id: duration_calc 
     type: io.kestra.plugin.scripts.python.Script
@@ -197,17 +201,14 @@ tasks:
 
     script: |
       fin = "{{ taskrun.startDate }}"
-
       from datetime import datetime
       from kestra import Kestra
 
       deb = {{ outputs.start.value }}
       print(f"deb : {deb}") 
       print(f"fin : {fin}")       
-
       dt_deb = datetime.fromisoformat(deb.replace("Z", "+00:00"))
       dt_fin = datetime.fromisoformat(fin.replace("Z", "+00:00"))
-
       delta = dt_fin - dt_deb
       Kestra.outputs( { 'total_time' : delta.total_seconds(), 'start' : str(dt_deb)})
 
@@ -216,7 +217,7 @@ tasks:
     format: |
       -
       ════════════════════════════════════════════════════════════
-      📊📊📊📊 PIPELINE EXECUTION RESULT : {{ outputs.final_status.value }} 📊📊📊📊
+      📊📊📊📊 HR INGESTION PIPELINE EXECUTION RESULT : {{ outputs.final_status.value }} 📊📊📊📊
       ════════════════════════════════════════════════════════════&nbsp;  
       📅 Start time     : {{ outputs.duration_calc.vars.start }}  
       ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
@@ -253,7 +254,7 @@ tasks:
       &nbsp;
       &nbsp; {% if (outputs.validate_sport_status.value != 'FAILED' and outputs.validate_hr_status.value != 'FAILED' )  %} 
       ════════════════════════════════════════════════════════════&nbsp;  
-      🔁🔁🔁🔁   MERGE FLOW RESULT{{ tasks.merge_flow.state }} 🔁🔁🔁🔁
+      🔁🔁🔁🔁   MERGE FLOW RESULT : {{ tasks.merge_flow.state }} 🔁🔁🔁🔁
       ════════════════════════════════════════════════════════════
       🔁 Employees and Sportive merging : {{ outputs.merge_hr_sport.vars.result }} : {{ outputs.merge_hr_sport.vars.shape }}  
       {% endif %} &nbsp;
@@ -282,4 +283,9 @@ tasks:
     type: io.kestra.plugin.core.log.Log
     description: Final Log
     message: "{{ outputs.final_log_txt.value }}"
+
+  - id: set_final_status
+    type: io.kestra.plugin.core.execution.Fail
+    condition: "{{ outputs.final_status.value =='FAILED'}}"
+
 
