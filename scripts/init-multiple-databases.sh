@@ -18,12 +18,12 @@ EOSQL
 # Create RH employees table
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
   CREATE TABLE IF NOT EXISTS employees (
-    id INTEGER PRIMARY KEY,
+    id VARCHAR(50) PRIMARY KEY,
     last_name VARCHAR(100),
     first_name VARCHAR(100),
     age INTEGER,
     business_unit VARCHAR(50),
-    seniority_years  date, 
+    seniority_years  INTEGER, 
     vacation_days INTEGER,
     employement_contract VARCHAR(20),
     salary DECIMAL(10,2),
@@ -35,9 +35,9 @@ EOSQL
 
 # Create sports activities table (no cross-DB FK constraint)
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'EOSQL'
-  CREATE TABLE public.sports_activities (
+  CREATE TABLE IF NOT EXISTS public.sports_activities (
     id text NOT NULL,
-    employee_id int4 NULL,
+    employee_id text NULL,
     sport varchar(50) NULL,
     location varchar(50) NULL,
     distance_meters int4 NULL,
@@ -47,7 +47,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'
     fingerprint text NULL,
     CONSTRAINT sports_activities_pkey PRIMARY KEY (id)
   );
-  CREATE UNIQUE INDEX sports_activities_fingerprint_idx ON public.sports_activities USING btree (fingerprint);
+  
 EOSQL
 
 echo "✅ Databases and tables initialized successfully"
