@@ -5,7 +5,7 @@ description: Pipeline de génération d'activités et export multi-canal
 inputs:
   - id: num_rows
     type: INT
-    defaults: 2
+    defaults: 20
     description: "Number of activities to generate"
 
   - id: target
@@ -38,9 +38,9 @@ tasks:
       CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c "from gen_activities import run_generation; run_generation('{{ vars.employees_sport }}', 'fake_activities.xlsx', '{{ vars.xl_sports_file }}', '{{ vars.xl_locations_file }}', {{ inputs.num_rows }})"
+      - python -c "from activity_worker import run_generation; run_generation('{{ vars.employees_sport }}', 'activities_fake.xlsx', '{{ vars.xl_sports_file }}', '{{ vars.xl_locations_file }}', {{ inputs.num_rows }})"
     outputFiles:
-      - "fake_activities.xlsx"
+      - "activities_fake.xlsx"
 
   - id: case_dest
     type: io.kestra.plugin.core.flow.Switch
@@ -56,7 +56,7 @@ tasks:
           type: io.kestra.plugin.googleworkspace.sheets.Load
           description: "Export vers Google Sheets via Plugin"
           #format: parquet
-          #from: "{{outputs.generate.outputFiles['activities.xlsx']}}"
+          #from: "{{outputs.generate.outputFiles['activities_fake.xlsx']}}"
           spreadsheetId: "{{ secret('GSHEET_ID') }}"
           range: "Feuille1!A1"
           serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"

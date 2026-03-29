@@ -91,13 +91,13 @@ tasks:
       DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
     commands:
       - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-      - python -c 'from activity_worker import scan_new_activities; scan_new_activities( "{{outputs.fingerprint_activities.outputFiles['activities_fingerprint.parquet'] }}", "actions.parquet")'
+      - python -c 'from activity_worker import scan_new_activities; scan_new_activities( "{{outputs.fingerprint_activities.outputFiles['activities_fingerprint.parquet'] }}", "activities_actions.parquet")'
     outputFiles:
-      - "actions.parquet"
+      - "activities_actions.parquet"
     
   - id: scan_new_activities_status
     type: io.kestra.plugin.core.debug.Return
-    format: "{{ tasks.scan_new_activities.state != 'SKIPPED' ? outputs.scan_new_activities.vars.status : 'FAILED'  }}"
+    format: "{{ tasks.scan_new_activities.state == 'SKIPPED' ? 'FAILED' : (outputs.scan_new_activities.vars.status == 'WARNING' or outputs.validate_incoming.vars.status == 'WARNING') ? 'WARNING' : 'SUCCESS' }}"
 
   - id: must_continue
     type: io.kestra.plugin.core.flow.Switch
@@ -114,13 +114,17 @@ tasks:
           type: io.kestra.plugin.scripts.python.Commands
           description: "Incoming activities commenting"
           allowFailure: true
+          env:
+            SIMPLE_COMMENTS: true # Do NOT generate comments with RAG
+            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+            DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from activity_worker import comment_activities; comment_activities("{{outputs.scan_new_activities.outputFiles['actions.parquet'] }}", "activities_processed.parquet", "{{ vars.xl_sports_file }}")'
+            - python -c 'from activity_worker import comment_activities; comment_activities("{{outputs.scan_new_activities.outputFiles['activities_actions.parquet'] }}", "activities_commented.parquet", "{{ vars.xl_sports_file }}")'
           outputFiles:
-            - "activities_processed.parquet"
+            - "activities_commented.parquet"
 
         - id: comment_activities_status
           type: io.kestra.plugin.core.debug.Return
@@ -134,11 +138,12 @@ tasks:
           taskRunner:
             type: io.kestra.plugin.core.runner.Process
           env:
+            MISTRAL_API_KEY: "{{ secret('MISTRAL_API_KEY') }}"
             CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
             DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
           commands:
             - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from activity_worker import load_pg; load_pg("{{outputs.comment_activities.outputFiles['activities_processed.parquet'] }}")'
+            - python -c 'from activity_worker import load_pg; load_pg("{{outputs.comment_activities.outputFiles['activities_commented.parquet'] }}")'
         - id: load_pg_status
           type: io.kestra.plugin.core.debug.Return
           format: "{{ tasks.load_pg.state != 'SKIPPED' ? outputs.load_pg.vars.status : 'FAILED'  }}"
@@ -170,6 +175,10 @@ tasks:
       delta = dt_fin - dt_deb
       Kestra.outputs( { 'total_time' : delta.total_seconds(), 'start' : str(dt_deb)})
 
+  - id: final_status
+    type: io.kestra.plugin.core.debug.Return
+    format: "{{ outputs.scan_new_activities_status.value == 'FAILED'  ? 'FAILED' :  outputs.scan_new_activities.vars.continue == 'NO' ? outputs.scan_new_activities_status.value :  outputs.load_pg_status.value == 'FAILED' ? 'FAILED': (outputs.load_pg_status.value == 'WARNING' or outputs.scan_new_activities_status.value == 'WARNING') ? 'WARNING' :'SUCCESS'}}"
+
   - id: final_log_txt
     type: io.kestra.plugin.core.debug.Return
     format: |
@@ -181,27 +190,60 @@ tasks:
       ⌛ Duration       : {{ outputs.duration_calc.vars.total_time }} sec  
       &nbsp;  
       ════════════════════════════════════════════════════════════&nbsp;  
-      💪💪💪💪  ACTIVITIES GSHEET LOAD AND ANALYSIS : {{ outputs.validate_hr_status.value }} 👷👷👷👷   
+      💪💪💪💪  ACTIVITIES GSHEET LOAD AND ANALYSIS : {{ outputs.scan_new_activities_status.value }} 💪💪💪💪    
       ════════════════════════════════════════════════════════════&nbsp;  
-      👷 Employees xlsx loading : {{ outputs.extract_hr.vars.result }} : {{ outputs.extract_hr.vars.shape }}   
-      {{ outputs.extract_hr.vars.detail }}  
-      {% if outputs.extract_hr.vars.status != 'FAILED' %}  
+      💪 Activities GSheet loading : {{ tasks.load_sheet.state }} : {{ outputs.load_sheet.size }} rows    
+      {% if tasks.load_sheet.state != 'FAILED' %}  
       &nbsp;
-      👷 Employees xlsx transforming : {{ outputs.transform_hr.vars.result }} : {{ outputs.transform_hr.vars.shape }}   
-      {{ outputs.transform_hr.vars.detail }} 
+      💪 Activities xlsx saving : {{ outputs.convert_to_xlsx_status.value }} : {{ outputs.convert_to_xlsx.size }}   
       {% endif %} 
-      {% if outputs.transform_hr_status.value != 'FAILED' %} 
-      👷 Employees xlsx validation : {{ outputs.validate_hr.vars.result }}  
-      {{ outputs.validate_hr.vars.detail }}  
-      {% endif %}  
       &nbsp;
+      {% if outputs.convert_to_xlsx_status.value != 'FAILED' %} 
+      💪 Activities xlsx validation : {{ outputs.validate_incoming.vars.result }} - {{ outputs.validate_incoming.vars.shape }}
+      {{ outputs.validate_incoming.vars.detail }}  
+      {% endif %}  
+      {% if outputs.validate_incomings_status.value != 'FAILED' %} 
+      💪 Activities xlsx fingerprinting : {{ outputs.fingerprint_activities.vars.result }} - {{ outputs.fingerprint_activities.vars.shape }}
+      {% endif %}  
+      {% if outputs.fingerprint_activities_status.value != 'FAILED' %} 
+      &nbsp;
+      💪 Activities xlsx scanning : {{ outputs.scan_new_activities.vars.result }} - {{ outputs.scan_new_activities.vars.shape }}
+      {{ outputs.scan_new_activities.vars.detail }}  
+      Must continue : {{ outputs.scan_new_activities.vars.continue }}
+      &nbsp;  
+      {% endif %}  
+      &nbsp;  
+      {% if outputs.scan_new_activities.vars.status != 'FAILED' and outputs.scan_new_activities.vars.continue == 'NO' %}
+      No actions to database 
+      {% else %}
+      ════════════════════════════════════════════════════════════&nbsp;  
+      💪💪💪💪  ACTION CHANGES TO DB  : {{ outputs.load_pg_status.value }} 💪💪💪💪   
+      ════════════════════════════════════════════════════════════&nbsp;  
+      💪 Comment new and changed Activities : {{ outputs.comment_activities.vars.result }} : {{ outputs.comment_activities.vars.shape }} rows    
+      {% if tasks.load_sheet.state != 'FAILED' %}  
+      &nbsp;
+      💪 Activities to db : {{ outputs.load_pg.vars.result }} : {{ outputs.load_pg.vars.shape }}
+      &nbsp;  
+       {{ outputs.load_pg.vars.detail }}  
+      {% endif %} 
+      {% endif %} 
 
-  - id: final_status
-    type: io.kestra.plugin.core.debug.Return
-    format: "{{ outputs.scan_new_activities_status.value != 'FAILED' and ( outputs.scan_new_activities.vars.continue == 'NO' or (outputs.scan_new_activities.vars.continue == 'YES' and outputs.load_pg_status.value != 'FAILED' ))? 'SUCCESS' : 'FAILED' }}"
+  - id: send_alert
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: error_handler
+    namespace: sds.infra
+    runIf: "{{ outputs.final_status.value != 'SUCCESS' }} "
+    inputs:
+      test: true
+      message: "{{outputs.final_log_txt.value}}"
+      status: "{{ outputs.final_status.value }}"
+
+  - id: log_final
+    type: io.kestra.plugin.core.log.Log
+    description: Final Log
+    message: "{{ outputs.final_log_txt.value }}"
 
   - id: set_final_status
     type: io.kestra.plugin.core.execution.Fail
     condition: "{{ outputs.final_status.value =='FAILED'}}"
-
 
