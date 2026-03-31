@@ -21,7 +21,7 @@ tasks:
       - id: log_final
         type: io.kestra.plugin.core.log.Log
         message: |
-          {{ inputs.status }} ALERT MESSAGE : Abnormal termination of employee/sport pipeline : {{ inputs.status }}
+          {{ inputs.status }} ALERT MESSAGE : Abnormal termination of flow : {{ inputs.status }}
           &nbsp;
           {{ inputs.message }}
     else:

@@ -209,6 +209,7 @@ tasks:
       print(f"fin : {fin}")       
       dt_deb = datetime.fromisoformat(deb.replace("Z", "+00:00"))
       dt_fin = datetime.fromisoformat(fin.replace("Z", "+00:00"))
+
       delta = dt_fin - dt_deb
       Kestra.outputs( { 'total_time' : delta.total_seconds(), 'start' : str(dt_deb)})
 
