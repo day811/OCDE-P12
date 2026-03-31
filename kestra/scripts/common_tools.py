@@ -66,6 +66,7 @@ WEIGHT: str = "weight"
 HOUR_RANGES: str = "hour_range"
 
 START_DATE = os.getenv('START_DATE',"2025-06-01")
+FIRST_MONTH = os.getenv('FIRST_MONTH',"06")
 
 # Weighting and time slots for activity generation
 PERIOD_REPARTION: Dict[str, Dict[str, Any]] = {
@@ -334,7 +335,7 @@ class Sport_engine():
     Core engine to handle sport activity logic, including duration, 
     distance calculations, and realistic scheduling.
     """
-    def __init__(self, excel_sport_file, start_date, excel_locations_file: str = "") -> None:
+    def __init__(self, excel_sport_file, first_month, excel_locations_file: str = "") -> None:
         """
         Initializes the engine by loading sport configurations.
         
@@ -346,7 +347,10 @@ class Sport_engine():
         self.df_locations: pd.DataFrame 
         self.sport_list = []
         self.strava_sport_list = []
-        self.start_day = datetime.fromisoformat(start_date)
+        tnow = datetime.now()
+        chosen_month= int(first_month)
+        chosen_year = tnow.year if int(first_month)< tnow.month else tnow.year - 1
+        self.start_day = datetime(chosen_year,chosen_month,1)
         self.load_sport_file(excel_sport_file)
         if excel_locations_file:
             self.load_locations_file(excel_locations_file)

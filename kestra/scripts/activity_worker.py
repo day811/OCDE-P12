@@ -93,7 +93,7 @@ def run_generation(
         nb_inactive = len(df_inactifs)
         
         # Initialize the Sport Engine (logic for dates, distances, and sport types)
-        sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE, excel_locations_file)
+        sport_engine = ct.Sport_engine(excel_sport_file, ct.FIRST_MONTH, excel_locations_file)
     
         # --- Weight calculation for ACTIVE group (Power Law) ---
         # Simulates a competitive environment where a few are very active

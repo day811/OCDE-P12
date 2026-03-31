@@ -446,7 +446,7 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
         logger.info(f"Start transforming sport raw data from : {raw_file_parquet}")
 
         details = []
-        sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
+        sport_engine = ct.Sport_engine(excel_sport_file, ct.FIRST_MONTH)
         df_sport = pd.read_parquet(raw_file_parquet)
         #df_sport['strava_sport'] = df_sport['sport_type'].apply(sport_engine.get_normalized_sport)
         #details.append(f"Find sport in strava list and aliases")
@@ -486,7 +486,7 @@ def validate_sport(processed_file_parquet: str, output_file, excel_sport_file: s
     try :
         logger.info(f"Start processing data  : {processed_file_parquet}")
 
-        sport_engine = ct.Sport_engine(excel_sport_file, ct.START_DATE)
+        sport_engine = ct.Sport_engine(excel_sport_file, ct.FIRST_MONTH)
 
         df_sport = pd.read_parquet(processed_file_parquet)
 
@@ -659,10 +659,7 @@ def load_pg(merge_file_parquet: str) -> None:
         df_merge = pd.read_parquet(merge_file_parquet)
         shape = (0,0)
         details = []
-        cols_to_drop = ['margin_kms']
         df_merge['id'] = df_merge['id'].astype(str)
-        df_merge.drop(columns = cols_to_drop, inplace= True)
-        details.append(f"Remove cols : {' - '.join(cols_to_drop)}")
         details.append(f"Merge loading to PostgreSQL")
         details.append("Fields names : " + " - ".join(df_merge.columns.to_list()))
         ct.kestra_output('detail', details, f"{ct.SP2}- ", lf=True)
