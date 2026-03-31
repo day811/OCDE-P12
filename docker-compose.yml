@@ -29,7 +29,7 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./scripts/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
+      - ./postgres/init/init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
     networks:
       - sport-pipeline
 
@@ -140,35 +140,30 @@ services:
     environment:
       - SPARK_MODE=master
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
     depends_on:
       postgres:
         condition: service_healthy  
     volumes:
       - ./data/delta-lake:/opt/spark/data  # Delta Lake storage
       - spark-logs:/opt/spark/logs
-
+      - ./kestra/scripts:/opt/spark/scripts     
     ports:
       - "8082:8080"  # Spark UI
       - "7077:7077"  # Master URL
     networks:
       - sport-pipeline
     command: >
-      bash -c "
-        /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master 
-        --host spark-master --port 7077 --webui-port 8080
-      "
-
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master --host spark-master --port 7077 --webui-port 8080
   # Spark Worker
   spark-worker:
     image: apache/spark:3.5.3
     container_name: spark-worker
+    env_file:
+        - .env
     environment:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_MEMORY=512m
       - SPARK_WORKER_CORES=2
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
@@ -179,7 +174,9 @@ services:
         condition: service_started  
     volumes:
       - ./data/delta-lake:/opt/spark/data
-      - spark-logs:/opt/spark/logs
+      - ./kestra/scripts:/opt/spark/scripts     
+      - ./spark/checkpoints:/opt/spark/checkpoints
+      - spark-logs:/opt/spark/logs    
     healthcheck:
           test: ["CMD", "curl", "-f", "http://localhost:8081"]
           interval: 10s
