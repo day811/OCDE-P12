@@ -1,6 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StructField, StringType, IntegerType
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DecimalType
 
 spark = SparkSession.builder \
     .appName("CleanPostgresStream") \
@@ -11,15 +11,19 @@ spark.sparkContext.setLogLevel("ERROR")
 # 1. Définition du schéma Debezium (on cible le payload)
 # On définit juste ce qu'on veut extraire pour rester simple
 user_schema = StructType([
-    StructField("id", IntegerType()),
-    StructField("name", StringType()),
-    StructField("role", StringType()),
-    StructField("department", StringType())
+    StructField("id", StringType()),
+    StructField("sport_type", StringType()),
+    StructField("age", IntegerType()),
+    StructField("distance_kms", DecimalType(10,1)),
+    StructField("margin_kms", DecimalType(10,1)),
+    StructField("salary", DecimalType(10,2)),
+    StructField("business_unit", StringType())
 ])
 
 payload_schema = StructType([
     StructField("payload", StructType([
-        StructField("after", user_schema)
+        StructField("after", user_schema),
+        StructField("op", StringType())
     ]))
 ])
 
@@ -33,9 +37,14 @@ df = spark.readStream \
 
 # 3. Extraction des données "after" (la nouvelle ligne)
 # On parse le JSON, on va dans payload -> after, puis on aplatit les colonnes
-clean_df = df.select(from_json(col("value").cast("string"), payload_schema).alias("data")) \
-                .select("data.payload.after.*") \
-                .filter(col("id").isNotNull()) # On ignore les messages de suppression (after est nul)
+df_parsed = df.select(from_json(col("value").cast("string"), payload_schema).alias("data"))
+
+# On descend dans la structure : data -> payload -> after
+clean_df = df_parsed.select("data.payload.after.*")
+
+# FILTRE CRUCIAL : On ne garde que si 'after' n'est pas nul
+# (C'est ce qui évite les lignes d'entêtes seules pour les messages de suppression ou d'init)
+clean_df = clean_df.filter(col("id").isNotNull())
 
 # 4. Écriture sur le disque (Volume bindé)
 # On utilise le format CSV pour que tu puisses l'ouvrir facilement sur ton PC
