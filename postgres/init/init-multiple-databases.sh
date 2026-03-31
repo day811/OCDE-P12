@@ -39,13 +39,14 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'
     id text NOT NULL,
     employee_id text NULL,
     sport varchar(50) NULL,
-    location varchar(50) NULL,
+    situation varchar(50) NULL,
     distance_meters int4 NULL,
     begin_date timestamp NULL,
     duration_sec int4 NULL,
     comment text NULL,
     fingerprint text NULL,
-    CONSTRAINT sports_activities_pkey PRIMARY KEY (id)
+    CONSTRAINT sports_activities_pkey PRIMARY KEY (id),
+    CONSTRAINT sports_activities_employees_fk FOREIGN KEY (employee_id) REFERENCES public.employees(id) ON DELETE RESTRICT
   );
   
 EOSQL
