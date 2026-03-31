@@ -1,8 +1,8 @@
 from typing import List
-from engine import BaseLLM
+from rag.base_llm import BaseLLM
 from google import genai
 import logging
-from config import Config
+from rag.config import Config
 
 logger = logging.getLogger(__name__)
 

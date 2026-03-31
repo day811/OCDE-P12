@@ -15,28 +15,28 @@ from geopy.extra.rate_limiter import RateLimiter
 import common_tools as ct
 
 
-# On ne met PAS de stream=sys.stdout ici
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(levelname)s - %(message)s'
+    format='%(levelname)s - %(message)s',
     stream=sys.stdout,
     force=True  
 )
 
 logger = logging.getLogger("sds.infra.ingest_hr")
-logger.propagate = False # Évite de doubler les logs avec la config de base
+logger.propagate = False # Avoid log doubling with base config
 logger.setLevel(logging.INFO)
 
-# Handler 1 : Les INFOS vont vers STDOUT (Vert dans Kestra)
+# Handler 1 : INFOS logs forward to STDOUT (Green in Kestra)
 h_info = logging.StreamHandler(sys.stdout)
 h_info.setLevel(logging.INFO)
 h_info.addFilter(lambda record: record.levelno <= logging.INFO) # Stricte INFO
 
-# Handler 2 : Les WARNINGS/ERRORS vont vers STDERR (Orange/Rouge dans Kestra)
+# Handler 2 : WARNINGS/ERRORS logs forward to STDERR (Orange/Red in Kestra)
 h_warn = logging.StreamHandler(sys.stderr)
-h_warn.setLevel(logging.WARNING) # Capte WARNING, ERROR, CRITICAL
+h_warn.setLevel(logging.WARNING) # Catch WARNING, ERROR, CRITICAL
 
-# Formatage
+# Format
 formatter = logging.Formatter('%(levelname)s - %(message)s')
 h_info.setFormatter(formatter)
 h_warn.setFormatter(formatter)
@@ -44,10 +44,10 @@ h_warn.setFormatter(formatter)
 logger.addHandler(h_info)
 logger.addHandler(h_warn)
 
-ct.logger=logger
+ct.logger = logger
+
 # --- Initialisation des Connexions ---
 # L'URL de la base de données est injectée via un secret Kestra dans les variables d'environnement
-
                       
 DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
 
@@ -59,9 +59,11 @@ COMPANY_ADDR = "1362 Av. des Platanes, 34970 Lattes"
 
 geolocator = GoogleV3(api_key=GOOGLE_MAPS_KEY, timeout=10)  # type: ignore
 
+# Delay time between each api request 
+GEO_DELAY = 0.2
 geocode_with_retry = RateLimiter(
     geolocator.geocode, 
-    min_delay_seconds=0.2, 
+    min_delay_seconds=GEO_DELAY, 
     max_retries=3, 
     error_wait_seconds=4
 )
@@ -74,9 +76,8 @@ class GlocMode(Enum):
     Relevants = "Relevants"
     Nobody = 'None'
 
-GEO_LOC_MODE:GlocMode = GlocMode.Nobody 
-# Delay time between each api request 
-GEO_DELAY = 0.15
+GEO_LOC_MODE:GlocMode = GlocMode.All 
+
 COMPANY_COORDS = (0.0, 0.0)
 
 if GEO_LOC_MODE != GlocMode.Nobody:
@@ -134,15 +135,12 @@ def get_coordinates(address: Optional[str]) :
     """
 
     try:
-        if GEO_LOC_MODE:
-            # Need a delay to respect API Nominatim rules
-            time.sleep(GEO_DELAY) 
-            loc = geolocator.geocode(address)
-            if loc:
-                return (loc.latitude, loc.longitude) # type: ignore
-            return None
-        else :
-            return None
+        # Need a delay to respect API Nominatim rules
+        loc = geolocator.geocode(address)
+        time.sleep(GEO_DELAY) 
+        if loc:
+            return (loc.latitude, loc.longitude) # type: ignore
+        return None
     except Exception as e:
         logger.error(f"Erreur pour l'adresse {address}: {e}")
         return None
@@ -158,9 +156,9 @@ def get_distance(employees_coord) -> Optional[float]:
         Distance in kilometers (float) or None if geocoding fails.
     """
 
-    if GEO_LOC_MODE:
+    if GEO_LOC_MODE != GlocMode.Nobody:
         if employees_coord :
-            return round(geodesic(COMPANY_COORDS, employees_coord).km, 2) # type: ignore
+            return round(geodesic(COMPANY_COORDS, get_coordinates(employees_coord)).km, 2) # type: ignore
         else:
             return None
     return 0 # set distance to 0 when GEO_LOC_MODE is not activated
@@ -301,20 +299,20 @@ def get_hr_expectations():
         gx.expectations.ExpectColumnValuesToNotBeNull(  # type: ignore
             column= "id", 
             description= "No missing ids",
-            meta={ ct.SEVERITY: ct.WARNING, ct.KEEP_ROW : False   },
+            meta={ ct.SEVERITY: ct.WARNING, ct.KEEP_ROW : False , ct.EXTRA_INFO : "last_name_test"  },
             ), 
         gx.expectations.ExpectColumnValuesToBeUnique( # type: ignore
             column= "id", 
             description= "No duplicated ids",
-            meta={ ct.SEVERITY: ct.FAILED }, 
+            meta={ ct.SEVERITY: ct.FAILED , ct.EXTRA_INFO : "last_name_test"}, 
             ), 
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
-            column= "first_name", 
+            column= "first_name_test", 
             description= "No missing first names",
             meta={ ct.SEVERITY: ct.WARNING, ct.KEEP_ROW : True  },
             ),
         gx.expectations.ExpectColumnValuesToNotBeNull( # type: ignore
-            column= "last_name", 
+            column= "last_name_test", 
             description= "No missing last_names",
             meta={ ct.SEVERITY: ct.FAILED }, 
             ),
@@ -379,16 +377,17 @@ def validate_hr(processed_file_parquet: str, output_file) -> None:
 
         df_rh = pd.read_parquet(processed_file_parquet)
         details=[]
-        df_rh['first_name'] = df_rh['first_name'].apply(ct.decrypt_text)    
+        df_rh['first_name_test'] = df_rh['first_name'].apply(ct.decrypt_text)    
         details.append("Decrypt all first names for validation")
 
-        df_rh['last_name'] = df_rh['last_name'].apply(ct.decrypt_text)    
+        df_rh['last_name_test'] = df_rh['last_name'].apply(ct.decrypt_text)    
         details.append("Decrypt all last names for validation")
 
         hr_expectations = get_hr_expectations()
-        df_cleaned , status, new_details, to_delete = ct.validate_dataframe(df_rh, "HR_Data", hr_expectations)
+        df_cleaned , status, new_details= ct.validate_dataframe(df_rh, "HR_Data", hr_expectations)
         details += new_details
         logger.info(f"End validating HR data  : {processed_file_parquet}")
+        df_cleaned.drop(columns=['first_name_test', 'last_name_test'], inplace= True)
         shape= df_cleaned.shape
         df_cleaned.to_parquet(output_file, index= False)
         details.append(f"Save validated employees data to {output_file} : {ct.SUCCESS}")
@@ -510,7 +509,7 @@ def validate_sport(processed_file_parquet: str, output_file, excel_sport_file: s
                 ),
         ]    
 
-        df_cleaned, status, details, to_delete = ct.validate_dataframe(df_sport, "Sport_Data", hr_expectations)
+        df_cleaned, status, details= ct.validate_dataframe(df_sport, "Sport_Data", hr_expectations)
         logger.info(f"End validating Sport data  : {processed_file_parquet}")
         shape= df_cleaned.shape
         df_cleaned.to_parquet(output_file, index= False)
@@ -669,7 +668,6 @@ def load_pg(merge_file_parquet: str) -> None:
         ct.kestra_output('detail', details, f"{ct.SP2}- ", lf=True)
         try : 
             with engine.begin() as conn:
-                conn.execute(text("TRUNCATE TABLE employees")) 
                 df_merge.to_sql('employees', conn, if_exists='append', index=False)
                 shape = df_merge.shape
         except Exception as e:
@@ -699,7 +697,7 @@ if __name__ == "__main__":
     import sys
     # Usage: python ingest_hr.py <action> <source> <destination>
     action = sys.argv[1]
-    #ct.MAX_ROWS = 5
+    ct.MAX_ROWS = 5
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
 

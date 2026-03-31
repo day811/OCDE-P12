@@ -23,7 +23,8 @@ KEEP_ROW = "Keep Row"
 SP2 = "&nbsp;"*2
 SP4 = "&nbsp;"
 STATUS_TXT = {SUCCESS : "✅&nbsp;Success", WARNING : "⚠️&nbsp;Warning", FAILED : "❌&nbsp;Failed"}
-
+EXTRA_INFO = "substitute"
+INDEX = "#IDX#"
 
 
 SPORT_MAPPING: Dict[str, Any] = {
@@ -46,10 +47,16 @@ HR_MAPPING = {
     'transport_mode' : object,
 }
 HR_COLUMNS = list(HR_MAPPING.keys())
+# Columns as they are download from Gsheet
+RAW_ACTIVITY_COLUMNS= ['employee_id','sport', 'situation','distance_meters','begin_date','duration_sec','id']
+# Columns that got insert in fingerprint compute
+ACTIVITY_FINGERPRINT= ['employee_id','sport', 'situation', 'distance_meters','begin_date','duration_sec']
+# Columns as they are stored in DB postegreSQL
+PG_ACTIVITY_COLUMNS= ['employee_id','sport', 'situation','distance_meters','begin_date','duration_sec','id', 'comment', 'fingerprint']
 
-RAW_ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id']
-ACTIVITY_FINGERPRINT= ['employee_id','sport', 'location', 'distance_meters','begin_date','duration_sec']
-PG_ACTIVITY_COLUMNS= ['employee_id','sport', 'location','distance_meters','begin_date','duration_sec','id', 'comment', 'fingerprint']
+# Columns as they are send in to RAG for generating comment
+RAG_ACTIVITY_COLUMNS= ['id','name','sport', 'situation','performance' ]
+
 SPORT_COLUMNS: List[str] = list(SPORT_MAPPING.keys())
 
 WEEK: str = "week"
@@ -78,7 +85,7 @@ cipher_suite = Fernet(CRYPT_KEY.encode()) # type: ignore
 
 def make_activity_id(activity_date:datetime):
 
-    return f"ACT-{activity_date.strftime('%Y%m%d-%H%M%S')}-{random.randint(0, 999):03d}"
+    return f"ACT-{activity_date.strftime('%y%m%d-%H%M')}-{random.randint(0, 99999):05d}"
 
 def make_exit_status(status):
     exit_status = 0 if status != FAILED else 1
@@ -208,7 +215,8 @@ def normalize_str(text: str) -> str:
 
 
 
-def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: List[Any]) -> Tuple[pd.DataFrame,str, List[str], List[Dict]]:
+
+def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: List[Any]) -> Tuple[pd.DataFrame,str, List[str]]:
     """
     Generic Great Expectations validation function using the WAP (Write-Audit-Publish) pattern.
 
@@ -255,6 +263,7 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
         severity = result.expectation_config.meta.get(SEVERITY, FAILED)  # type: ignore
         keep_row = result.expectation_config.meta.get(KEEP_ROW, True) # type: ignore
         column_name = result.expectation_config.kwargs.get("column") # type: ignore
+        substitute = result.expectation_config.meta.get(EXTRA_INFO, 'id') # type: ignore
         if result.success:
            details.append(f"Expectation : {result.expectation_config.get('description', '')} ({severity}): {SUCCESS}")  # type: ignore
         else:
@@ -270,34 +279,41 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
 
             if len(flaws): 
                 if len(flaws_index):
+                    # list of flawed indexes exists
                     flaw_output = f"{SP4}Invalid values list :"
+                    if not keep_row:
+                        #indexes_to_delete.add(int(index_flaw))    
+                        flaw_dict = { 'column': column_name, 'values': flaws_index, EXTRA_INFO:substitute, 'is_index' : True}
+                        masks_to_delete.append(flaw_dict) 
                     for index_flaw, flaw in zip(flaws_index,flaws):
-                        reference = None
-                        if not keep_row:
-                            #indexes_to_delete.add(int(index_flaw))    
-                            reference = str(df.at[index_flaw, "id"])
-                        if not reference or reference == "nan":
-                            reference = f"{str(df.loc[index_flaw, 'first_name'])} {str(df.loc[index_flaw, 'last_name'])}"
-                        flaw_output +=  f"\n{SP4}- Employee : {reference} --> Ligne xlsx -> {str(index_flaw)}"       
+                        reference = f"{str(df.loc[index_flaw, substitute])}"
+                        flaw_output +=  f"\n{SP4}- Ref : {reference} --> Lignes -> {str(index_flaw)}"  
+
                 else:
+                #no index, only a list of value that don't respect the column expectation
                     flaw_output = f"- Invalid values list :\n{SP4}- "
                     flaw_output +=  f"\n{SP4}- {column_name} : ".join([str(flaw) for flaw in flaws])
                     if not keep_row:
-                        flaw_dict = {'column' : column_name, 'values': flaws}
+                        flaw_dict = {'column' : column_name, 'values': flaws, EXTRA_INFO:substitute}
                         masks_to_delete.append(flaw_dict)    
 
                 details.append(f'{flaw_output}')
     
     df_cleaned = pd.DataFrame()
     if status != FAILED:
-        nb_deleted = len(masks_to_delete)
-        if nb_deleted:
+        if len(masks_to_delete):
             for delete_mask in masks_to_delete:
                 column_to_mask = delete_mask['column']
-                mask = df[column_to_mask].isin(delete_mask['values'])
-                fields = {'id', 'employee_id', column_to_mask}
+                is_index = delete_mask.get('is_index', False)
+                if is_index:
+                    mask = df.index.isin(delete_mask['values'])
+                else:
+                    mask = df[column_to_mask].isin(delete_mask['values'])
+                substitute = delete_mask[EXTRA_INFO]
+                fields = {substitute, column_to_mask}
                 to_delete = df[mask][list(fields)].to_dict('records')
-                details.append(f"Deleted {nb_deleted} flawed activities : ")
+                nb_to_delete = len(to_delete)
+                details.append(f"Deleted {nb_to_delete} flawed activities : ")
                 details.extend(to_delete)
                 df_cleaned = df[~mask].copy()
         else:
@@ -308,11 +324,10 @@ def validate_dataframe(df: pd.DataFrame, suite_name: str, expectations_list: Lis
     elif status == WARNING:
         # SPECIFIC CASE : no errors except  WARNINGS
         logger.warning(f"Warning during {suite_name} validation with gX")
-        print(f"::warning:: Warning during {suite_name} validation with gX")
     else:
         # CRITICAL CASE : Au moins une erreur 'critical' (comme l'ID)
         logger.error(f"Fail to validate {suite_name} with gX (Critical). : ")
-    return df_cleaned, status, details, list(masks_to_delete)
+    return df_cleaned, status, details
 
 class Sport_engine():
     """
@@ -327,8 +342,8 @@ class Sport_engine():
             excel_sport_file: Path to the CSV containing sport metrics and popularity.
             start_date_str: The baseline date for activity generation (YYYY-MM-DD).
         """
-        self.df: pd.DataFrame
-        self.locations_df: pd.DataFrame 
+        self.df_sport: pd.DataFrame
+        self.df_locations: pd.DataFrame 
         self.sport_list = []
         self.strava_sport_list = []
         self.start_day = datetime.fromisoformat(start_date)
@@ -344,7 +359,7 @@ class Sport_engine():
         """
 
         self.aliases ={}
-        for _, row in self.df.iterrows():
+        for _, row in self.df_sport.iterrows():
              if isinstance(row['alias'],str):
                  for alias in row['alias'].split(','):
                      self.aliases[alias.strip()]  = row['sport']
@@ -368,8 +383,9 @@ class Sport_engine():
     
         try:
     #        global SPORTS_LIST
-            self.df = pd.read_excel(excel_sport_file)
+            self.df_sport = pd.read_excel(excel_sport_file)
             self.make_aliases()
+            self.df_sport['templates'] = self.df_sport['templates'].str.split('|')
         except:
             logger.error(f"Fail to load strava sports list : {excel_sport_file}")
             # En production, on pourrait isoler les lignes erronées ici
@@ -394,7 +410,7 @@ class Sport_engine():
     
         try:
     #        global SPORTS_LIST
-            self.locations_df = pd.read_excel(excel_locations_file)
+            self.df_locations = pd.read_excel(excel_locations_file)
         except:
             logger.error(f"Fail to load locations list : {excel_locations_file}")
             # En production, on pourrait isoler les lignes erronées ici
@@ -410,7 +426,7 @@ class Sport_engine():
         """
 
         if not len(self.sport_list):
-            self.sport_list = self.df['sport'].to_list()
+            self.sport_list = self.df_sport['sport'].to_list()
         return self.sport_list
     
     def get_strava_sport_list(self) -> List[str]:
@@ -421,7 +437,7 @@ class Sport_engine():
             A filtered list of strava-like sports .
         """
         if not len(self.strava_sport_list):
-            self.strava_sport_list = self.df[self.df['strava_list']==1]['sport'].to_list()
+            self.strava_sport_list = self.df_sport[self.df_sport['strava_list']==1]['sport'].to_list()
         return self.strava_sport_list
 
     def get_normalized_sport(self, sport_name: Optional[str]) -> Optional[str]:
@@ -447,13 +463,20 @@ class Sport_engine():
                 return sport
         return None
 
-    def get_random_location(self, sport:str):
+    def get_random_situation(self, row, location):
+        if random.random() < 0.40:
+            templates =  row['templates']          
+            # On pioche un template selon le sport, sinon une phrase générique
+#            templates = SITUATIONS_TEMPLATES.get(sport_name, ["Séance à {loc}", "Top moment vers {loc}"])
+            return random.choice(templates).format(loc=location)
+        else:                       
+            return ""
 
         
         
         location = ""
 
-    def get_random_perfs(self, row: pd.Series, max_hours: int, max_repeat: int = 1) -> List[Dict[str, Any]]:
+    def get_random_perfs(self, row: pd.Series, max_hours: int, location:str,max_repeat: int = 1) -> List[Dict[str, Any]]:
         """
         Generates random distance and duration metrics based on sport constraints.
 
@@ -470,12 +493,14 @@ class Sport_engine():
         max_duration_sec = min( max_hours * 60, row['max_duration_min'])*60
         mean_duration_sec = (row['max_duration_min'] + row['min_duration_min']) * 30
         perfs = []
-        for i in range(max_repeat):      
+        for i in range(max_repeat):   
+
+            situation = self.get_random_situation (row, location)
             duration_sec = random.randint(row['min_duration_min'] * 60 ,max_duration_sec )
             duration_ratio = duration_sec / mean_duration_sec
             mean_distance_meters = (row['max_distance_meters'] + row['min_distance_meters']) / 2
-            distance_meters = round(mean_distance_meters * duration_ratio)
-            perfs.append({'distance_meters':distance_meters,'duration_sec':duration_sec})
+            distance_meters = round(mean_distance_meters * duration_ratio * (1 + ((random.randint(-100,100)/500))))
+            perfs.append({'distance_meters':distance_meters,'duration_sec':duration_sec, 'situation' : situation})
         return perfs
 
     def get_activity_random_period_timeslot(self, row: pd.Series) -> Tuple[str, Tuple[int, int]]:
@@ -563,23 +588,24 @@ class Sport_engine():
         """
 
         sport: Dict[str, Any] = {}
-        row = cast(pd.Series, self.df.loc[sport_index])
+        row = cast(pd.Series, self.df_sport.loc[sport_index])
         sport['sport'] = row['sport'] 
 
         location_idx = row['location']
         if np.isnan(location_idx):
-            location = random.choices(self.locations_df['location'].tolist(), k=1)[0]
+            location = random.choices(self.df_locations['location'].tolist(), k=1)[0]
         else:
             index= int(location_idx)
-            population = self.locations_df[self.locations_df['index'] == index]['location'].tolist()
+            population = self.df_locations[self.df_locations['index'] == index]['location'].tolist()
             location = random.choices(population, k=1)[0]
 
-        sport['location'] = location
+#        sport['location'] = location
+        
         period, time_slot = self.get_activity_random_period_timeslot(row)
         max_hours = time_slot[1]
         chosen_repeat = random.randint(a=1, b=row['vacation_repeat']) if period == VACATION else 1
 
-        perfs = self.get_random_perfs(row,max_hours,chosen_repeat)
+        perfs = self.get_random_perfs(row,max_hours, location, chosen_repeat)
 
         perfs = self.get_activity_random_dates( perfs, period, time_slot, chosen_repeat)
         sport['perfs'] = perfs
@@ -598,7 +624,7 @@ class Sport_engine():
         """
         
         norm_name = self.get_normalized_sport(raw_sport_name)
-        index = self.df.loc[self.df['sport']== norm_name].index
+        index = self.df_sport.loc[self.df_sport['sport']== norm_name].index
         if not index.empty:
             sport = self.get_random_activity_by_id(index[0])
             sport['sport'] = raw_sport_name
@@ -615,8 +641,8 @@ class Sport_engine():
             A complete activity dictionary for a weighted-randomly selected sport.
         """
         chosen_index = random.choices(
-            population=self.df.index,
-            weights=self.df['popularity_score'].tolist(),
+            population=self.df_sport.index,
+            weights=self.df_sport['popularity_score'].tolist(),
             k=1
         )[0]
 

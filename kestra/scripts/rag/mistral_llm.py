@@ -1,8 +1,8 @@
 from typing import List, Union
-from engine import BaseLLM
-from mistralai import Mistral
+from rag.base_llm import BaseLLM
+from mistralai.client import Mistral
 import logging
-from config import Config
+from rag.config import Config
 
 logger = logging.getLogger(__name__)
 

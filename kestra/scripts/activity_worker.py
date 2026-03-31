@@ -1,19 +1,19 @@
 import pandas as pd
 import numpy as np
 import random
-#from faker import Faker
 from kestra import Kestra
 from pathlib import Path
 import common_tools as ct
 import fastparquet
-import uuid
+import json
 from typing import List, Dict, Any, Optional
 from sqlalchemy import create_engine, text, engine as Pse
-import logging, os, sys
+import logging, os, sys, time
 import great_expectations as gx
 
+SIMPLE_COMMENTS = os.getenv('SIMPLE_COMMENTS',"true").lower() != 'false'
 
- #--- Configuration du Logging ---
+ #---Logging Configuration ---
 logging.basicConfig(
     level=logging.INFO,
     format='%(levelname)s - %(message)s',
@@ -22,19 +22,19 @@ logging.basicConfig(
     )
 logger = logging.getLogger("sds.infra.ingest_activities")
 
-logger.propagate = False # Évite de doubler les logs avec la config de base
+logger.propagate = False # Avoid log doubling with base config
 logger.setLevel(logging.INFO)
 
-# Handler 1 : Les INFOS vont vers STDOUT (Vert dans Kestra)
+# Handler 1 : INFOS logs forward to STDOUT (Green in Kestra)
 h_info = logging.StreamHandler(sys.stdout)
 h_info.setLevel(logging.INFO)
 h_info.addFilter(lambda record: record.levelno <= logging.INFO) # Stricte INFO
 
-# Handler 2 : Les WARNINGS/ERRORS vont vers STDERR (Orange/Rouge dans Kestra)
+# Handler 2 : WARNINGS/ERRORS logs forward to STDERR (Orange/Red in Kestra)
 h_warn = logging.StreamHandler(sys.stderr)
-h_warn.setLevel(logging.WARNING) # Capte WARNING, ERROR, CRITICAL
+h_warn.setLevel(logging.WARNING) # Catch WARNING, ERROR, CRITICAL
 
-# Formatage
+# Format
 formatter = logging.Formatter('%(levelname)s - %(message)s')
 h_info.setFormatter(formatter)
 h_warn.setFormatter(formatter)
@@ -43,7 +43,7 @@ logger.addHandler(h_info)
 logger.addHandler(h_warn)
 
 ct.logger = logger
-#fake = Faker('fr_FR')
+
 
 ACT_VS_INACT = 2
 DATABASE_URL = os.getenv('DB_CONNECTION_STRING',"")
@@ -142,11 +142,11 @@ def run_generation(
             else:
                 activity = sport_engine.get_random_activity()
             cur_activity['sport'] = activity['sport'] 
-            cur_activity['location'] = activity['location'] 
 
             # Map activity performances (dates, distances) to the current employee
             for perf in activity['perfs']:
                 new_activity = cur_activity.copy()
+                new_activity['situation'] = perf['situation']
                 new_activity['distance_meters'] = perf['distance_meters']
                 new_activity['begin_date'] = perf['begin_date']
                 new_activity['duration_sec'] = perf['duration_sec']
@@ -224,13 +224,8 @@ def validate_incoming(incoming_xlsx: str, output_file):
                 description= "No missing begin date", 
                 meta={ ct.SEVERITY: ct.WARNING , ct.KEEP_ROW : False },
                 ) ,
-            gx.expectations.ExpectColumnValuesToNotBeNull( # pyright: ignore[reportPrivateImportUsage]
-                column= "location", 
-                description= "No missing location", 
-                meta={ ct.SEVERITY: ct.WARNING , ct.KEEP_ROW : False },
-                ) ,
         ]    
-        df_cleaned, status, details, to_delete = ct.validate_dataframe(df_incoming, "Incoming Data", hr_expectations)
+        df_cleaned, status, details= ct.validate_dataframe(df_incoming, "Incoming Data", hr_expectations)
 
         shape= df_cleaned.shape
         df_cleaned.to_parquet(output_file, index= False)
@@ -279,10 +274,10 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
     continue_flow = "NO"
     details = []
     status = ct.SUCCESS
+    shape=(0,0)
     try : 
         logger.info(f"Start loading incoming data : {fingerprinted_activities}")
         df_inc_activities = pd.read_parquet(fingerprinted_activities)
-        df_inc_activities['comment']=''
         df_inc_activities['employee_id'] = df_inc_activities['employee_id'].astype(str)
         df_inc_activities['distance_meters'] = df_inc_activities['distance_meters'].astype('Int64')
         df_inc_activities['duration_sec'] = df_inc_activities['duration_sec'].astype('Int64')
@@ -343,6 +338,7 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
 
         if continue_flow == "YES":
             try :
+#                df_final.drop(columns='comment', inplace=True)
                 df_final.to_parquet(actions_file, index=False)
                 details.append(f"Activity actions saved to file : {actions_file}")
                 shape = df_final.shape
@@ -357,55 +353,80 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
         logger.error(f"Error during scanning {fingerprinted_activities} : {e}")
         status = ct.FAILED
 
+    ct.kestra_output("shape", shape, sep= " X ", trail= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", trail=True)
     ct.kestra_output("continue", continue_flow, raw=True)
     ct.kestra_output("status", status, raw=True)
 
-def batch_comments(df_batch: pd.DataFrame) -> List[str]:
-    """
-    Simule la génération de commentaires pour un batch.
-    Plus tard, ici se fera l'appel au RAG.
-    """
-    # Simulation : "Sport à Lieu"
-    # On gère les cas où location pourrait être NaN
-    # add suffixe as we work wtih full merge file
-    suffixe = ""
-    comments = df_batch.apply(
-        lambda row: f"Session de {row[f'sport{suffixe}']} à {row[f'location{suffixe}']}" if pd.notna(row[f'location{suffixe}']) 
-        else f"Super séance de {row[f'sport{suffixe}']}", 
-        axis=1
-    )
-    return comments.tolist()
 
 def generate_comments(df_list:pd.DataFrame ):
     
+    from rag.engine import RAGEngine as Rag
+
+    def batch_comments(df_batch: pd.DataFrame, rag) -> List[str]:
+        """
+        Simule la génération de commentaires pour un batch.
+        Plus tard, ici se fera l'appel au RAG.
+        """
+        # Simulation : "Sport à Lieu"
+        # On gère les cas où situation pourrait être NaN
+        # add suffixe as we work wtih full merge file
+        response ={}
+        if SIMPLE_COMMENTS:
+            data = []
+            for idx, row in df_batch.iterrows():
+                data.append({ 'id': row['id'] ,'comment' : f"Bypass IA : {row['situation']}"})
+            return data
+        else:
+            context=df_batch.to_dict(orient='records')
+            response = rag.get_comments(context)
+            clean_content = response.get('answer').replace('```json', '').replace('```', '')
+            data = json.loads(clean_content)
+        return data['results']
+
     details=[]
-    batch_qty = 100
-    
+    batch_qty = 10
+    rag=None
+    if not SIMPLE_COMMENTS:
+        rag = Rag()
     # On identifie les indices des lignes à traiter
-    mask_todo = (df_list['_merge'] == 'left_only')
-    indices_todo = df_list[mask_todo].index
-    
+    indices_todo = df_list.index
     nb_to_generate = len(indices_todo)
     logger.info(f"Début de la génération de {nb_to_generate} commentaires par batchs de {batch_qty}")
 
+    comments= []
     for i in range(0, nb_to_generate, batch_qty):
         current_indices = indices_todo[i : i + batch_qty]
         
         # Extraction du sous-dataframe
         df_batch = df_list.loc[current_indices]
         
-        comments = batch_comments(df_batch)
-        
-        # Injection des résultats dans le DataFrame principal au bon endroit
-        df_list.loc[current_indices, 'comment'] = comments
+        comments_list = batch_comments(df_batch, rag=rag)
+        time.sleep(0.5)
+        comments.extend(comments_list)
         
         logger.info(f"Batch {i//batch_qty + 1} traité ({len(current_indices)} lignes)")
+    df_comments = pd.DataFrame(comments)    
 
-    return df_list
+    return df_comments
 
-
+def format_performance(row):
+    distance_meters= row.get('distance_meters',0)
+    dist_txt = ""
+    if distance_meters :
+        dist_km = round(row['distance_meters'] / 1000, 1)
+        dist_txt = f"{dist_km} km en "
+    
+    hours = int(row['duration_sec'] // 3600)
+    minutes = int((row['duration_sec'] % 3600) // 60)
+    
+    if hours > 0:
+        duration_str = f"{hours}h{minutes:02d}"
+    else:
+        duration_str = f"{minutes} min"
+        
+    return f"{dist_txt}{duration_str}"
 
 def comment_activities(actions_file:str, output_file: str, excel_sport_file: str) -> None:
     """
@@ -423,11 +444,34 @@ def comment_activities(actions_file:str, output_file: str, excel_sport_file: str
     try :
         logger.info(f"Start loading actions to do : {actions_file}")
         df_actions = pd.read_parquet(actions_file)
+        df_actions['employee_id'] = df_actions['employee_id'].astype(str)
+
+        #isolate activities to be comment 'right_only must be kept
+        mask_todo = (df_actions['_merge'] == 'left_only')
+        df_to_comment = df_actions[mask_todo]
+        engine:Pse.Engine = create_engine(DATABASE_URL)
+        with engine.begin() as conn:
+            logger.info(f"Start loadaing employees list from db  : ")
+            df_employees = pd.read_sql("SELECT id as employee_id , first_name , last_name FROM employees", conn)
+            df_employees['employee_id'] = df_employees['employee_id'].astype(str)
+
+        df_rag = df_to_comment.merge(df_employees, how= 'left', on = 'employee_id').copy()
+        df_rag['first_name'] = df_rag['first_name'].apply(ct.decrypt_text)
+        df_rag['last_name'] = df_rag['last_name'].apply(ct.decrypt_text)
+        df_rag['name'] = df_rag['first_name']  + df_rag['last_name'].apply( lambda x : f" {x[0]}.")
+        df_rag['performance'] = df_rag.apply(format_performance,axis=1)
 
         # make comments for changed or new activities
-        df_commented = generate_comments(df_actions)
-        df_actions.to_parquet(output_file, index=False) 
-        shape=df_actions.shape
+        df_commented = generate_comments(df_rag[ct.RAG_ACTIVITY_COLUMNS])
+        # merge with full action df to keep old comments
+        df_final = df_actions.merge(df_commented, on='id', how='left', suffixes= ('','_y'))
+        
+        mask_done = df_final['_merge'] == 'left_only'
+        df_final.loc[mask_done, 'comment'] = df_final.loc[mask_done, 'comment_y']
+        df_final['comment'] = df_final['comment'].apply(ct.encrypt_text)
+        df_final.drop(columns='comment_y', inplace=True)
+        df_final.to_parquet(output_file, index=False) 
+        shape=df_final.shape
     
     except Exception as e:
         status = ct.FAILED
@@ -462,24 +506,26 @@ def load_pg(processed_file: str) -> None:
         engine:Pse.Engine = create_engine(DATABASE_URL)
         with engine.begin() as conn:
             logger.info(f"Start connection to postgres  : ")
- 
+            nb_new = nb_mod = nb_del = 0
             for _, row in df_todo.iterrows():
                 params = row.to_dict()
                 params_log = str({k: params[k] for k in ct.PG_ACTIVITY_COLUMNS if k in params})
                 if row['status'] == 'new':
                     # INSERT : On utilise les noms de colonnes de la table
                     query = text("""
-                        INSERT INTO sports_activities (id, employee_id, sport, location, begin_date, duration_sec, distance_meters, comment, fingerprint)
-                        VALUES (:id, :employee_id, :sport, :location, :begin_date, :duration_sec, :distance_meters, :comment, :fingerprint)
+                        INSERT INTO sports_activities (id, employee_id, sport, situation, begin_date, duration_sec, distance_meters, comment, fingerprint)
+                        VALUES (:id, :employee_id, :sport, :situation, :begin_date, :duration_sec, :distance_meters, :comment, :fingerprint)
                     """)
                     conn.execute(query, params) # type: ignore
-                    
+                    nb_new += 1
                 elif row['status'] == 'modified':
                     # UPDATE : On met à jour les champs qui peuvent changer
                     query = text("""
                         UPDATE sports_activities 
-                        SET sport = :sport, 
-                            location = :location, 
+                        SET sport = :sport,
+                            employee_id = :employee_id, 
+                            situation = :situation, 
+                            begin_date = :begin_date,
                             duration_sec = :duration_sec, 
                             distance_meters = :distance_meters,
                             comment = :comment,
@@ -493,7 +539,7 @@ def load_pg(processed_file: str) -> None:
                     details.append(f"{ct.WARNING} : Old values : {old_txt}")
                     details.append(f"{ct.WARNING} : New values : {params_log}")
                     status = ct.WARNING
-                    
+                    nb_mod += 1
                 elif row['status'] == 'deleted':
                     # DELETE (ou log d'anomalie selon ton choix)
                     logger.warning(f"Deleting activity {row['id']} from DB (absent from source)")
@@ -501,8 +547,11 @@ def load_pg(processed_file: str) -> None:
                     details.append(f"{ct.WARNING} : deleted activity :")
                     details.append(f"{ct.WARNING} : Old values : {params_log}")
                     status = ct.WARNING
-
+                    nb_del +=1
             # Si on arrive ici, SQLAlchemy fait le COMMIT automatiquement
+            details.append(f"Number of saved new activities : {nb_mod}")
+            details.append(f"Number of saved modified activities : {nb_mod}")
+            details.append(f"Number of saved deleted activities : {nb_del}")
             if status == ct.WARNING:
                 logger.warning("Sauvegarde réussie avec anomalie : COMMIT effectué.")
             else:
@@ -521,20 +570,20 @@ def load_pg(processed_file: str) -> None:
 
 if __name__ == "__main__":
     import sys
-    
+    SIMPLE_COMMENTS = True
     action = sys.argv[1]
     # CLI parameters
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
     if action == "rung_gen":
-        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/sources/strava_sports.xlsx", f"{BASE_DIR}/data/sources/locations.xlsx", 10)
+        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/sources/strava_sports.xlsx", f"{BASE_DIR}/data/sources/locations.xlsx", 3000)
     elif action == "validate":
-        validate_incoming(f"{BASE_DIR}/data/tmp/activities.xlsx", f"{BASE_DIR}/data/tmp/activities_income.parquet")
+        validate_incoming(f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/tmp/activities_income.parquet")
     elif action == "fingerprint":
         fingerprint_activities(f"{BASE_DIR}/data/tmp/activities_income.parquet",f"{BASE_DIR}/data/tmp/activities_fingerprint.parquet", )
     elif action == "scan":
-        scan_new_activities( f"{BASE_DIR}/data/tmp/activities_fingerprint.parquet",f"{BASE_DIR}/data/tmp/actions.parquet")
+        scan_new_activities( f"{BASE_DIR}/data/tmp/activities_fingerprint.parquet",f"{BASE_DIR}/data/tmp/activities_actions.parquet")
     elif action == "comment":
-        comment_activities(f"{BASE_DIR}/data/tmp/actions.parquet",f"{BASE_DIR}/data/tmp/activities_processed.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")  
+        comment_activities(f"{BASE_DIR}/data/tmp/activities_actions.parquet",f"{BASE_DIR}/data/tmp/activities_commented.parquet", f"{BASE_DIR}/data/sources/strava_sports.xlsx")  
     elif action == "load_pg":
-        load_pg(f"{BASE_DIR}/data/tmp/activities_processed.parquet")
+        load_pg(f"{BASE_DIR}/data/tmp/activities_commented.parquet")
