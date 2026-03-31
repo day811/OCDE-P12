@@ -29,6 +29,7 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "sport_app_db" <<-'
     salary DECIMAL(10,2),
     transport_mode VARCHAR(50),
     distance_kms DECIMAL(10,1),
+    margin_kms DECIMAL(10,1),
     sport_type VARCHAR(50)
   );
 EOSQL
