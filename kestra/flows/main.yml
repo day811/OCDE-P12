@@ -1,0 +1,54 @@
+
+id: main
+namespace: sds.infra
+
+variables:
+  script_path: /app/scripts/
+
+tasks:
+
+# --- PHASE 1 : REDPANDA INITIALISATION ---
+  - id: init_redpanda_topics
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      networkMode: "ocde-p12_sport-pipeline"
+    containerImage: docker.redpanda.com/redpandadata/redpanda:v23.3.9
+    allowFailure: true
+    commands:
+      # Topics creation for CDC and Spark
+      - rpk topic create cdc.public.employees --brokers redpanda:9092
+      - rpk topic create cdc.public.activities --brokers redpanda:9092
+    
+  # --- PHASE 2 : DEBEZIUM INITIALISATION ---
+
+
+  - id: register_cdc_connector
+    type: io.kestra.plugin.core.http.Request
+    uri: "http://debezium:8083/connectors/postgres-connector/config"
+    method: PUT
+    contentType: application/json
+    body: |
+      {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "database.hostname": "postgres",
+        "database.port": "5432",
+        "database.user": "{{ secret('POSTGRES_USER') }}",
+        "database.password": "{{ secret('POSTGRES_PASSWORD') }}",
+        "database.dbname": "{{ secret('POSTGRES_DB') }}",
+        "database.server.name": "postgres",
+        "table.include.list": "public.employees,public.sports_activities",
+        "plugin.name": "pgoutput",
+        "decimal.handling.mode": "double",
+        "topic.prefix": "cdc"
+      }
+
+
+  - id: ingest_pipeline
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    disabled: true
+    flowId: ingest_hr
+    wait: true
+  
+      
