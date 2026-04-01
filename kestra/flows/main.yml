@@ -42,7 +42,11 @@ tasks:
         "decimal.handling.mode": "double",
         "topic.prefix": "cdc"
       }
-
+  - id: spark_employees
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: spark_employees_stream
+    wait: false
 
   - id: ingest_pipeline
     type: io.kestra.plugin.core.flow.Subflow
