@@ -1,5 +1,5 @@
 # Utilise la version de Kestra que tu as actuellement
-FROM kestra/kestra:latest-full
+FROM kestra/kestra:latest
 
 # Passer en root pour l'installation
 USER root
