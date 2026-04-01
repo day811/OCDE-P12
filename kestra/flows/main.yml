@@ -1,6 +1,9 @@
 
-id: setup
+id: main
 namespace: sds.infra
+
+variables:
+  script_path: /app/scripts/
 
 tasks:
 
@@ -11,46 +14,44 @@ tasks:
       type: io.kestra.plugin.scripts.runner.docker.Docker
       networkMode: "ocde-p12_sport-pipeline"
     containerImage: docker.redpanda.com/redpandadata/redpanda:v23.3.9
-    
+    allowFailure: true
     commands:
       # Topics creation for CDC and Spark
       - rpk topic create cdc.public.employees --brokers redpanda:9092
       - rpk topic create cdc.public.activities --brokers redpanda:9092
-      - rpk topic create spark_checkpoints --brokers redpanda:9092
     
   # --- PHASE 2 : DEBEZIUM INITIALISATION ---
+
+
   - id: register_cdc_connector
     type: io.kestra.plugin.core.http.Request
-    uri: "http://debezium:8083/connectors"
-    method: POST
+    uri: "http://debezium:8083/connectors/postgres-connector/config"
+    method: PUT
     contentType: application/json
     body: |
       {
-        "name": "postgres-connector",
-        "config": {
-          "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
-          "database.hostname": "postgres",
-          "database.port": "5432",
-          "database.user": "{{ secret('POSTGRES_USER') }}",
-          "database.password": "{{ secret('POSTGRES_PASSWORD') }}",
-          "database.dbname": "{{ secret('POSTGRES_DB') }}",
-          "database.server.name": "postgres",
-          "table.include.list": "public.employees,public.activities",
-          "plugin.name": "pgoutput",
-          "topic.prefix": "cdc"
-        }
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "database.hostname": "postgres",
+        "database.port": "5432",
+        "database.user": "{{ secret('POSTGRES_USER') }}",
+        "database.password": "{{ secret('POSTGRES_PASSWORD') }}",
+        "database.dbname": "{{ secret('POSTGRES_DB') }}",
+        "database.server.name": "postgres",
+        "table.include.list": "public.employees,public.sports_activities",
+        "plugin.name": "pgoutput",
+        "decimal.handling.mode": "double",
+        "topic.prefix": "cdc"
       }
-
-    # --- PHASE 3 : STARTING SPARK ---
-  - id: start_spark_streaming
+  - id: spark_employees
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
-    flowId: spark_streaming
-    wait: true
+    flowId: spark_employees_stream
+    wait: false
 
   - id: ingest_pipeline
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
+    disabled: true
     flowId: ingest_hr
     wait: true
   

@@ -1,26 +1,16 @@
 id: test
 namespace: sds.infra
 
-inputs:
-  - id: run_task
-    type: BOOLEAN
-    defaults: true
-  - id: sometext
-    type: STRING
-    defaults: Some Text
+
 
 tasks:
-  - id: main
-    type: io.kestra.plugin.core.debug.Return
-    format: |
-      {% if 2>1 %} inputs.sometext {% endif %}
-    runIf: "{{ inputs.run_task }}"
+  - id: submit_to_spark
+    type: io.kestra.plugin.scripts.shell.Commands
+    taskRunner: 
+      type: io.kestra.plugin.core.runner.Process
+    commands:
+      # On installe le client docker si l'image ne l'a pas
+      - docker ps  > "dockerps.txt" # Si cette commande répond, on a gagné.
+    outputFiles:
+      - "dockerps.txt"
 
-  - id: fallback
-    type: io.kestra.plugin.core.debug.Return
-    format: fallback output
-
-outputs:
-  - id: flow_output
-    type: STRING
-    value: "{{ tasks.main.state != 'SKIPPED' ? outputs.main.value : outputs.fallback.value }}"
