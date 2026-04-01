@@ -278,7 +278,6 @@ tasks:
     inputs:
       test: true
       message: "{{outputs.final_log_txt.value}}"
-      status: "{{ outputs.final_status.value }}"
 
   - id: log_final
     type: io.kestra.plugin.core.log.Log

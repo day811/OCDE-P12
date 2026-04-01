@@ -1,4 +1,4 @@
-id: spark_activities_stats_stream
+id: spark_activities_slack_stream
 namespace: sds.infra
 
 tasks:
@@ -7,6 +7,8 @@ tasks:
 
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
+    env:
+      WEBHOOK_URL: "http://kestra:8080/api/v1/executions/sds.infra/notify/{{ envs.webhook_id }}"
     commands: 
       - |
         docker exec -u root spark-master /opt/spark/bin/spark-submit \
@@ -19,4 +21,4 @@ tasks:
         --conf spark.executor.cores=1 \
         --conf spark.cores.max=1 \
         --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,io.delta:delta-spark_2.12:3.1.0 \
-        /opt/spark/scripts/process_activities_stats.py
+        /opt/spark/scripts/process_activities_slack.py

@@ -1,21 +1,10 @@
-id: error_handler
+id: notify
 namespace: sds.infra
 description: "Centralisation des alertes pour le namespace"
 inputs:
-  - id: message
-    type: STRING
-    required: true
-    defaults: "Sample text message to send"
-    description: "Message to send"
-  
   - id: test
     type: BOOL
     defaults: true
-
-  
-  - id : status
-    type: STRING
-    defaults: WARNING
 
 tasks:
   - id: check_test
@@ -25,11 +14,14 @@ tasks:
       - id: log_final
         type: io.kestra.plugin.core.log.Log
         message: |
-          {{ inputs.status }} ALERT MESSAGE : Abnormal termination of flow : {{ inputs.status }}
-          &nbsp;
-          {{ inputs.message }}
+          "{{inputs.message}}"
     else:
       - id: notify_slack
         type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
-        url: "TON_WEBHOOK_URL"
-        payload: '"text" :  "{{ inputs.message }}"'
+        url: "{{ secrets('SLACK_WEBHOOK_URL')}}"
+        payload: "{{inputs.message}}"
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ envs.webhook_id)}}"

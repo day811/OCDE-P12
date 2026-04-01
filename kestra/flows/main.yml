@@ -48,6 +48,10 @@ tasks:
     flowId: spark_employees_stream
     wait: false
 
+  - id: wait5_employees
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+    
   - id: spark_activities_stats
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
