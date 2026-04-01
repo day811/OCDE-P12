@@ -30,7 +30,7 @@ tasks:
   - id: generate
     type: io.kestra.plugin.scripts.python.Commands
     description: "Génération des activités sportives"
-    warningOnStdErr: false
+#    warningOnStdErr: false
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     env: 

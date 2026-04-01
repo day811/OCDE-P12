@@ -48,6 +48,12 @@ tasks:
     flowId: spark_employees_stream
     wait: false
 
+  - id: spark_activities_stats
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: spark_activities_stats_stream
+    wait: false
+
   - id: ingest_pipeline
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra

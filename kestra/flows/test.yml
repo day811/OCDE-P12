@@ -1,8 +1,6 @@
 id: test
 namespace: sds.infra
 
-
-
 tasks:
   - id: submit_to_spark
     type: io.kestra.plugin.scripts.shell.Commands

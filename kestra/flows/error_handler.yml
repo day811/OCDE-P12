@@ -7,7 +7,7 @@ inputs:
     required: true
     description: "Message to send"
   - id: test
-    type: BOOLEAN
+    type: BOOL
     defaults: true
   - id : status
     type: STRING
@@ -26,6 +26,6 @@ tasks:
           {{ inputs.message }}
     else:
       - id: notify_slack
-        type: io.kestra.plugin.notifications.slack.SlackIncomingWebhook
+        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
         url: "TON_WEBHOOK_URL"
         payload: "Erreur détectée sur le flow {{ flow.id }}. Vérifiez Great Expectations !"

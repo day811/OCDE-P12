@@ -15,5 +15,8 @@ tasks:
         --conf "spark.executor.extraJavaOptions=-Dlog4j.configuration=file:/opt/spark/conf/log4j.properties" \
         --master spark://spark-master:7077 \
         --conf spark.executor.memory=512m \
+        --conf spark.driver.memory=512m \
+        --conf spark.executor.cores=1     \
+        --conf spark.cores.max=1\
         --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,io.delta:delta-spark_2.12:3.1.0 \
         /opt/spark/scripts/process_employees.py
