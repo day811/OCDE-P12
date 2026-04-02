@@ -251,6 +251,7 @@ tasks:
 triggers:
   - id: gsheet_watch
     type: io.kestra.plugin.googleworkspace.sheets.SheetModifiedTrigger
+    interval: PT5H
     spreadsheetId: "{{ secret('GSHEET_ID') }}"
     serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
     allowConcurrent: false

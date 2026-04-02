@@ -1,25 +1,25 @@
 id: notify
 namespace: sds.infra
 description: "Centralisation des alertes pour le namespace"
-inputs:
-  - id: test
-    type: BOOL
-    defaults: true
 
 tasks:
   - id: check_test
-    type: io.kestra.plugin.core.flow.If
-    condition : "{{ inputs.test }}"
-    then :
-      - id: log_final
-        type: io.kestra.plugin.core.log.Log
-        message: |
-          "{{inputs.message}}"
-    else:
-      - id: notify_slack
-        type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
-        url: "{{ secrets('SLACK_WEBHOOK_URL')}}"
-        payload: "{{inputs.message}}"
+    type: io.kestra.plugin.core.flow.Switch
+    value : "{{ trigger.body }}"
+    cases :
+      YES:
+        - id: notify_slack
+          type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+          url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+          messageText: "{{trigger.body.comment}}"
+
+      defaults:
+        - id: log_final
+          type: io.kestra.plugin.core.log.Log
+          message: |
+            Notification test détourné de Slack  
+            &nbsp;
+            {{trigger.body.comment}}
 
 triggers:
   - id: webhook

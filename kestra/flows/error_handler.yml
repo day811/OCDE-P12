@@ -31,5 +31,5 @@ tasks:
     else:
       - id: notify_slack
         type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
-        url: "TON_WEBHOOK_URL"
-        payload: '"text" :  "{{ inputs.message }}"'
+        url: "{{ secret('SLACK_WEBHOOK_URL')}}"
+        messageText: "{{ inputs.message }}"
