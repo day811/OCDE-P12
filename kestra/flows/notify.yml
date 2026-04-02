@@ -24,4 +24,4 @@ tasks:
 triggers:
   - id: webhook
     type: io.kestra.plugin.core.trigger.Webhook
-    key: "{{ envs.webhook_id)}}"
+    key: "{{ secret('WEBHOOK_ID')}}"

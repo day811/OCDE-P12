@@ -42,6 +42,12 @@ tasks:
         "decimal.handling.mode": "double",
         "topic.prefix": "cdc"
       }
+
+  - id: wait5_debezium
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+
+
   - id: spark_employees
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
