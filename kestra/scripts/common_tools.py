@@ -65,7 +65,6 @@ VACATION: str = "vacation"
 WEIGHT: str = "weight"
 HOUR_RANGES: str = "hour_range"
 
-START_DATE = os.getenv('START_DATE',"2025-06-01")
 FIRST_MONTH = os.getenv('FIRST_MONTH',"06")
 
 # Weighting and time slots for activity generation
