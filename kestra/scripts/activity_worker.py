@@ -549,7 +549,7 @@ def load_pg(processed_file: str) -> None:
                     status = ct.WARNING
                     nb_del +=1
             # Si on arrive ici, SQLAlchemy fait le COMMIT automatiquement
-            details.append(f"Number of saved new activities : {nb_mod}")
+            details.append(f"Number of saved new activities : {nb_new}")
             details.append(f"Number of saved modified activities : {nb_mod}")
             details.append(f"Number of saved deleted activities : {nb_del}")
             if status == ct.WARNING:
