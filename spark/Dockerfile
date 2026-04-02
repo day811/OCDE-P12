@@ -6,7 +6,7 @@ USER root
 
 # Installer les dépendances
 # On utilise --break-system-packages car les images récentes sont basées sur Debian 12
-RUN pip install cryptography
+RUN pip install cryptography requests
 
 # Rebasculer vers l'utilisateur kestra pour la sécurité
 USER root
