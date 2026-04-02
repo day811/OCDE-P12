@@ -33,7 +33,7 @@ payload_schema = StructType([
 # --- LECTURE ---
 df_raw = spark.readStream.format("kafka") \
     .option("kafka.bootstrap.servers", "redpanda:9092") \
-    .option("subscribe", "cdc.public.activities") \
+    .option("subscribe", "cdc.public.sports_activities") \
     .load()
 
 # --- TRANSFORMATIONS MÉTIER ---
