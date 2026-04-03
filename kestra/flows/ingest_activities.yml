@@ -2,6 +2,11 @@ id: ingest_activities
 namespace: sds.infra
 description: Ingestion pipeline of Google Sheet Data in postgreSQL DB
 
+inputs:
+  - id: simple_comments
+    type: BOOL
+    defaults: false
+    description: DO NOT use RAG to generate comment
 
 
 variables:
@@ -115,7 +120,7 @@ tasks:
           description: "Incoming activities commenting"
           allowFailure: true
           env:
-            SIMPLE_COMMENTS: "true" # Do NOT generate comments with RAG
+            SIMPLE_COMMENTS: "{{ inputs.simple_comments }}" # Do NOT generate comments with RAG
             CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
             DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
           taskRunner:

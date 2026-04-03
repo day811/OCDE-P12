@@ -64,6 +64,16 @@ tasks:
     flowId: spark_activities_stats_stream
     wait: false
 
+  - id: wait5_act_stats
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+    
+  - id: spark_activities_slack
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: spark_activities_slack_stream
+    wait: false
+
   - id: ingest_pipeline
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra

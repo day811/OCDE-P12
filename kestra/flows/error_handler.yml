@@ -11,8 +11,8 @@ inputs:
   - id: test
     type: BOOL
     defaults: true
+    description: "Send message to log"
 
-  
   - id : status
     type: STRING
     defaults: WARNING
