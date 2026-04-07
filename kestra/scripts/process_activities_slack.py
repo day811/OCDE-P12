@@ -13,13 +13,13 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-LOG_NOTIF = os.getenv('LOG_NOTIF',"YES") # NO : To Slack, YES: To logs, NOTHING: No action
+LOG_NOTIF = os.getenv('LOG_NOTIF',"NO") # NO : To Slack, YES: To logs, NOTHING: No action
 print(f"Send message to log instead of Slack : {LOG_NOTIF}")
 webhook_id = os.getenv('WEBHOOK_ID','')
 if not webhook_id:
     print(f"Missing web hook id")
     exit(1)
-KESTRA_API_URL = "http://kestra:8080/api/v1/executions/webhook/sds.infra/notify/" + webhook_id
+KESTRA_API_URL = "http://kestra:8080/api/v1/executions/webhook/sds.infra/post_activity/" + webhook_id
 #print(f"Kestra webhook url : {KESTRA_API_URL}")
 
 # Get CRYPT KEY TO ENCRYPT COMMENTS

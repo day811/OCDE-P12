@@ -19,7 +19,7 @@ activity_schema = StructType([
     StructField("id", StringType()),
     StructField("employee_id", StringType()),
     StructField("sport", StringType()),
-    StructField("begin_date", LongType()), # Timestamp (ms ou µs selon Debezium)
+    StructField("begin_date", LongType()), # Timestamp (ms ou µs depending on Debezium)
     StructField("duration_sec", IntegerType()),
     StructField("distance_meters", IntegerType())
 ])
@@ -30,7 +30,7 @@ payload_schema = StructType([
     ]))
 ])
 
-# --- LECTURE ---
+# --- Stream reading  ---
 df_raw = spark.readStream.format("kafka") \
     .option("kafka.bootstrap.servers", "redpanda:9092") \
     .option("subscribe", "cdc.public.sports_activities") \

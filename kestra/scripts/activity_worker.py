@@ -331,7 +331,7 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
         details.append(f"Number of identical activities : {nb_identical}")
         df_diff = df_actions[df_actions['_merge'] != 'both'].copy()
 
-        # remove _x and _y suffixes in column name
+        # remove _y suffixes in column name
         cols_to_fix = [c.replace('_y', '') for c in df_diff.columns if c.endswith('_y')]
 
         mask_right = df_diff['_merge'] == 'right_only'
