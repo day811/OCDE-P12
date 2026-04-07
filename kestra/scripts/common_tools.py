@@ -99,9 +99,11 @@ def extract_xlsx( file_path: str,  names= None, mapping= None, header=0, max_row
     Includes encryption for sensitive HR fields (names and addresses).
 
     Args:
-        file_type: Type of file to process ("hr" or "sport").
         file_path: Path to the source Excel file.
-        output_file: Destination path for the generated Parquet file.
+        names: Column names for the DataFrame.
+        mapping: Data type mapping for the DataFrame.
+        header: Row number containing column names.
+        max_rows: Maximum number of rows to read.
     """
 
     try :
@@ -149,7 +151,7 @@ def decrypt_text(encrypted_text: Optional[str]) -> Optional[str]:
     except Exception as e:
         return f"Error: {e}"
     
-def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail: Any = True, raw = False) -> None:
+def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, lead: Any = True, raw = False) -> None:
     """
     Handles variable output for Kestra context or standard CLI printing.
 
@@ -158,16 +160,16 @@ def kestra_output(name: str, values: Any, sep: str = "", lf: bool = False, trail
         values: The data to output (string or list of strings).
         sep: Separator used between multiple values.
         lf: If True, adds a line feed and indentation before the separator.
-        trail: Controls leading/trailing text or spacing (True for default separator).
+        lead: Controls leading text or spacing (True for default separator).
     """
     if not isinstance(values, list):
         values = [str(values)]
     if raw:
         final_txt =" ".join(values)
     else:
-        if isinstance(trail,str):
-            final_txt = trail
-        elif trail == True:
+        if isinstance(lead,str):
+            final_txt = lead
+        elif lead == True:
             final_txt = sep
         else:
             final_txt = ""

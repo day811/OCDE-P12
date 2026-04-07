@@ -181,6 +181,15 @@ def get_max_distance(transport_mode: str) -> int:
         return 0
 
 def load_hr_xlsx(file_path: str, output_file: str):
+    """
+    Loads HR data from an Excel file and saves it to a Parquet file.
+
+    Args:
+        file_path: Path to the input Excel file.
+        output_file: Path to save the output Parquet file.
+    Returns:
+        The distance limit in km.
+    """
 
     details = []
     status = ct.SUCCESS
@@ -204,7 +213,7 @@ def load_hr_xlsx(file_path: str, output_file: str):
         status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -275,7 +284,7 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
         status = ct.FAILED
         logger.error(f"Abnormal termination of HR raw data transforming into {output_file}")    
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -283,6 +292,12 @@ def transform_hr(raw_file_parquet: str, output_file: str) -> None:
     
 
 def get_hr_expectations():
+    '''
+    Defines a set of Great Expectations expectations for validating HR data.
+    
+    Returns:
+        A list of Great Expectations expectation objects.
+    '''
 
     min_age = 16
     max_age = 80
@@ -366,9 +381,8 @@ def validate_hr(processed_file_parquet: str, output_file) -> None:
 
     Args:
         processed_file_parquet: Path to the Parquet file to validate.
+        output_file: Path to save the validated Parquet file.
 
-    Raises:
-        ValueError: If critical data quality expectations are not met.
     """
     details = []
     status = ct.SUCCESS
@@ -412,6 +426,14 @@ def validate_hr(processed_file_parquet: str, output_file) -> None:
 
 
 def load_sport_xlsx(file_path: str, output_file: str):
+    '''
+    Loads sportive data from an Excel file and saves it to a Parquet file.
+    
+    Args:
+    file_path: Path to the input Excel file.
+    output_file: Path to save the output Parquet file.
+    
+    '''
     
     shape = (0,0)
     status = ct.SUCCESS
@@ -423,7 +445,7 @@ def load_sport_xlsx(file_path: str, output_file: str):
     except Exception as e:
         status = ct.FAILED
 
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -460,7 +482,7 @@ def transform_sport(raw_file_parquet: str, output_file: str, excel_sport_file: s
         status = ct.FAILED
         f"Error: {e}"
 
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -475,6 +497,7 @@ def validate_sport(processed_file_parquet: str, output_file, excel_sport_file: s
 
     Args:
         processed_file_parquet: Path to the processed sportive Parquet file.
+        output_file: Path to save the validated Parquet file.
         excel_sport_file: Path to the sports reference Excel file.
 
     Raises:
@@ -552,7 +575,7 @@ def merge_hr_sport(hr_file_path: str, sport_file_path: str, output_file: str) ->
     except Exception as e:
         status = ct.FAILED
 
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -675,7 +698,7 @@ def load_pg(merge_file_parquet: str) -> None:
         status = ct.FAILED
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", (0,0), sep= " X ", trail= False)
+    ct.kestra_output("shape", (0,0), sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))

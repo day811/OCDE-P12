@@ -71,8 +71,9 @@ def run_generation(
         
         Args:
             source_xlsx: Path to the Excel file containing employee data.
-            output_parquet: Path where the generated Parquet file will be saved.
+            output_excel: Path for the generated Excel file with synthetic activities.
             excel_sport_file: Path to the CSV/Excel file containing sport configurations.
+            excel_locations_file: Path to the CSV/Excel file containing location data for activities.
             num_rows: Total number of iterations to run for activity generation.
         """
         # 1. Load employee reference data
@@ -167,7 +168,7 @@ def run_generation(
         logger.error( f"Critical error : {e}")
 
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -175,7 +176,12 @@ def run_generation(
 
 def validate_incoming(incoming_xlsx: str, output_file):
     """
-    Valide l'intégrité des données entrantes avant la comparaison.
+    Validates incoming sportive data from an Excel file against a set of predefined expectations.
+    The function checks for data quality issues such as missing values, uniqueness of IDs, and referential integrity with employee IDs in the database. Validated data is then saved to a Parquet file for further processing.ential integrity with employee IDs in the database. Validated data is then saved to a Parquet file for further processing.
+
+    Args:
+        incoming_xlsx: Path to the Excel file containing incoming sportive data.
+        output_file: Path where the validated Parquet file will be saved.
     """
     details = []
     status = ct.SUCCESS
@@ -235,13 +241,20 @@ def validate_incoming(incoming_xlsx: str, output_file):
         logger.error(f"Error during validating {incoming_xlsx} to postgreSQL: {e}")
         status = ct.FAILED
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
 
 
 def fingerprint_activities(incoming_activities, output_file):
+    '''Generates a unique fingerprint for each activity based on specific columns and saves the result to a Parquet
+    file. This function is crucial for identifying and tracking activities across different stages of the data pipeline.
+    
+    Args:   
+        incoming_activities: Path to the Parquet file containing incoming activities data.
+        output_file: Path where the Parquet file with fingerprinted activities will be saved.
+        '''
 
     details = []
     status = ct.SUCCESS
@@ -260,7 +273,7 @@ def fingerprint_activities(incoming_activities, output_file):
         logger.error(f"Error during loading {incoming_activities} to postgreSQL: {e}")
         status = ct.FAILED
 #    ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -269,6 +282,12 @@ def fingerprint_activities(incoming_activities, output_file):
 
 
 def scan_new_activities(fingerprinted_activities,actions_file:str):
+    '''Compares incoming activities with existing records in the PostgreSQL database to identify new, modified, or deleted activities. The function generates a report of the differences and saves it to a Parquet file for further processing.
+    
+    Args:   
+        fingerprinted_activities: Path to the Parquet file containing fingerprinted activities data.
+        actions_file: Path where the Parquet file with activity actions will be saved.
+    '''
 
 
     continue_flow = "NO"
@@ -353,25 +372,34 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
         logger.error(f"Error during scanning {fingerprinted_activities} : {e}")
         status = ct.FAILED
 
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
-    ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", trail=True)
+    ct.kestra_output("detail", details, lf= True,sep= f"{ct.SP2}- ", lead=True)
     ct.kestra_output("continue", continue_flow, raw=True)
     ct.kestra_output("status", status, raw=True)
 
 
 def generate_comments(df_list:pd.DataFrame ):
+    '''Generates comments for a list of activities using a RAG (Retrieval-Augmented Generation) engine. The function processes activities in batches to optimize performance and manage API calls effectively. Depending on the configuration, it can either simulate comments or call the RAG engine for real comment generation.
+    
+        Args:
+            df_list: A pandas DataFrame containing the activities for which to generate comments.
+    
+        Returns:
+            A pandas DataFrame containing the generated comments.
+    '''
     
     from rag.engine import RAGEngine as Rag
 
     def batch_comments(df_batch: pd.DataFrame, rag) -> List[str]:
         """
-        Simule la génération de commentaires pour un batch.
-        Plus tard, ici se fera l'appel au RAG.
+        Generates comments for a batch of activities using the RAG engine. If SIMPLE_COMMENTS is set to True, it simulates comments based on the activity situation instead of calling the RAG engine.
+
+        Args:
+            df_batch: A pandas DataFrame containing a batch of activities.
+            rag: An instance of the RAG engine to use for comment generation.  
         """
-        # Simulation : "Sport à Lieu"
-        # On gère les cas où situation pourrait être NaN
-        # add suffixe as we work wtih full merge file
+       
         response ={}
         if SIMPLE_COMMENTS:
             data = []
@@ -393,7 +421,7 @@ def generate_comments(df_list:pd.DataFrame ):
     # On identifie les indices des lignes à traiter
     indices_todo = df_list.index
     nb_to_generate = len(indices_todo)
-    logger.info(f"Début de la génération de {nb_to_generate} commentaires par batchs de {batch_qty}")
+    logger.info(f"Generation starts for {nb_to_generate} comments by batchs for total of {batch_qty} comments")
 
     comments= []
     for i in range(0, nb_to_generate, batch_qty):
@@ -406,7 +434,7 @@ def generate_comments(df_list:pd.DataFrame ):
         time.sleep(0.5)
         comments.extend(comments_list)
         
-        logger.info(f"Batch {i//batch_qty + 1} traité ({len(current_indices)} lignes)")
+        logger.info(f"Batch {i//batch_qty + 1} processed ({len(current_indices)} lines)")
     df_comments = pd.DataFrame(comments)    
 
     return df_comments
@@ -479,7 +507,7 @@ def comment_activities(actions_file:str, output_file: str, excel_sport_file: str
 
     logger.info(f"End incoming comments generation to file {output_file}")
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
@@ -490,7 +518,7 @@ def load_pg(processed_file: str) -> None:
 
     Args:
         processed_file: Path to the final Parquet file to load.
-        truncate: Boolean indicates if truncating before
+       
     """
     details = []
     status = ct.SUCCESS
@@ -562,7 +590,7 @@ def load_pg(processed_file: str) -> None:
         status = ct.FAILED
     logger.info(f"End incoming comments generation to postgreSQL")
     ct.kestra_output("detail", details,sep=f"{ct.SP2}- ",lf=True )
-    ct.kestra_output("shape", shape, sep= " X ", trail= False)
+    ct.kestra_output("shape", shape, sep= " X ", lead= False)
     ct.kestra_output("result", ct.STATUS_TXT[status])
     ct.kestra_output("status", status, raw=True)
     sys.exit(ct.make_exit_status(status))
