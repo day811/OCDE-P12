@@ -1,0 +1,39 @@
+id: notify
+namespace: sds.infra
+description: "Centralisation des notification Slack via kestra webhook"
+
+inputs:
+  - id: other_log_notif
+    type: STRING
+    defaults: "NO"
+
+
+tasks:
+  - id: check_test
+    type: io.kestra.plugin.core.flow.Switch
+    value : "{{ trigger.body.log_notif }}"
+    #value: "NO"
+    cases :
+      NO:
+        - id: notify_slack
+          type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
+          url: "{{ secret('SLACK_WEBHOOK_URL') }}"
+          messageText: "{{trigger.body.comment}}"
+          retry:
+            type: constant
+            maxAttempt: 3
+            maxDuration: PT30S
+            interval: PT5S
+            
+      YES:
+        - id: only_log
+          type: io.kestra.plugin.core.log.Log
+          message: |
+            Notification test détourné de Slack  
+            &nbsp;
+            {{trigger.body.comment}}
+
+triggers:
+  - id: webhook
+    type: io.kestra.plugin.core.trigger.Webhook
+    key: "{{ secret('WEBHOOK_ID')}}"

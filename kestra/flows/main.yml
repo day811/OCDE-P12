@@ -18,7 +18,7 @@ tasks:
     commands:
       # Topics creation for CDC and Spark
       - rpk topic create cdc.public.employees --brokers redpanda:9092
-      - rpk topic create cdc.public.activities --brokers redpanda:9092
+      - rpk topic create cdc.public.sports_activities --brokers redpanda:9092
     
   # --- PHASE 2 : DEBEZIUM INITIALISATION ---
 
@@ -42,10 +42,36 @@ tasks:
         "decimal.handling.mode": "double",
         "topic.prefix": "cdc"
       }
+
+  - id: wait5_debezium
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+
+
   - id: spark_employees
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
     flowId: spark_employees_stream
+    wait: false
+
+  - id: wait5_employees
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+    
+  - id: spark_activities_stats
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: spark_activities_stats_stream
+    wait: false
+
+  - id: wait5_act_stats
+    type: io.kestra.plugin.core.flow.Sleep
+    duration: PT5S
+    
+  - id: spark_activities_slack
+    type: io.kestra.plugin.core.flow.Subflow
+    namespace: sds.infra
+    flowId: spark_activities_slack_stream
     wait: false
 
   - id: ingest_pipeline
