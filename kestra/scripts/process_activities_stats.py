@@ -34,12 +34,13 @@ payload_schema = StructType([
 df_raw = spark.readStream.format("kafka") \
     .option("kafka.bootstrap.servers", "redpanda:9092") \
     .option("subscribe", "cdc.public.sports_activities") \
+    .option("failOnDataLoss", "false") \
     .load()
 
 # --- TRANSFORMATIONS MÉTIER ---
 df_processed = df_raw.select(from_json(col("value").cast("string"), payload_schema).alias("data")) \
     .select("data.payload.after.*") \
-    .filter(col("id").isNotNull())
+    .filter(col("id").isNotNull()) 
 
 # Conversion du timestamp Debezium en date réelle
 # Note: Debezium Postgres envoie souvent des microsecondes, d'où le / 1000000
@@ -51,7 +52,7 @@ df_with_date = df_processed.withColumn("activity_date", from_unixtime(col("begin
 df_social = df_with_date.withColumn("start_year", 
     when(month(col("activity_date")) >= FIRST_MONTH, year(col("activity_date")))
     .otherwise(year(col("activity_date")) - 1)
-).withColumn("social_year", concat(col("start_year"), lit("-"), col("start_year") + 1))
+).withColumn("social_year", concat(col("start_year"), lit("-"), col("start_year") + 1)).withColumn("_event_timestamp", current_timestamp())
 
 # --- ÉCRITURE DELTA ---
 query = df_social.writeStream \
