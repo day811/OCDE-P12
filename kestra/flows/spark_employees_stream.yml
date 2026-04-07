@@ -4,7 +4,10 @@ namespace: sds.infra
 tasks:
   - id: run_spark_employees
     type: io.kestra.plugin.scripts.python.Commands
-
+    retry:
+      type: constant
+      maxAttempt: 3
+      interval: PT10S
     taskRunner:
       type: io.kestra.plugin.core.runner.Process
     commands: 

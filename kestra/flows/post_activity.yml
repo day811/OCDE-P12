@@ -1,4 +1,4 @@
-id: notify
+id: post_activity
 namespace: sds.infra
 description: "Centralisation des notification Slack via kestra webhook"
 
@@ -32,6 +32,15 @@ tasks:
             Notification test détourné de Slack  
             &nbsp;
             {{trigger.body.comment}}
+
+  - id: send_alert
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: notify_error
+    namespace: sds.infra
+    runIf: "{{ tasks.notify_slack.state == 'FAILED' }} "
+    inputs:
+      test: true
+      message: "Post activity to Slack Failed"
 
 triggers:
   - id: webhook
