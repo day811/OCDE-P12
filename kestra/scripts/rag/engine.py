@@ -97,38 +97,37 @@ class RAGEngine:
     def _build_prompt(self, activities_json) -> str:
         """Build prompt for LLM"""
 
-        debut =  f"""
-Tu es un coach sportif. Tu vas recevoir une liste d'activités sous forme de tableau JSON.
+        debut = f"""
+        Tu es un coach sportif expert, enthousiaste et très loquace. Ta mission est de rédiger des félicitations personnalisées pour des employés.
+        Chaque commentaire qui doit être un paragraphe riche et motivant est posté dans un canal Slack .
 
-Ta mission : Générer un commentaire de félicitations pour chaque entrée.
+        Données à traiter (JSON) :
+        {activities_json}
+        """
 
-Données à traiter :
-{activities_json}
-"""
         fin = """        
+        RÈGLES DE GÉNÉRATION (STRICTES) :
 
-Règles de génération :
+        1. LONGUEUR : Chaque commentaire DOIT faire entre 200 et 250 caractères. Ne sois pas concis, brode sur la performance et l'état d'esprit. Fait des passages à la ligne avec \\n pour aérer le résultat et met les mots importants en gras
+        2. STRUCTURE : 
+        - Salutation personnalisée (Name).
+        - Analyse de la performance (Distance, Durée, Sport).
+        - Rebond narratif sur la "Situation" (si présente) ou extrapolation sur les bienfaits du sport cité.
+        - Conclusion inspirante avec emojis.
+        3. IDENTIFIANT : Reprends exactement l'ID fourni.
+        4. FORMAT DE SORTIE : Uniquement un objet JSON avec une liste "results".
 
-Lien Identifiant : Tu dois impérativement reprendre l' id fourni dans le contexte pour chaque réponse.
-
-Contenu : Adresse-toi à Name, et utilise la performance. Si situation est remplie, rebondis sur son contenu. Sinon, encourage l'employé sur son sport.
-
-Format du commentaire : Style amical, motivant, entre 200 et 250 caractères.
-
-Format de sortie (Impératif) :
-Tu dois répondre par un objet JSON unique contenant une liste nommée results. Chaque élément de la liste doit avoir exactement deux champs : id et comment.
-
-Exemple de structure attendue :
-{
-  "results": [
-    { "id": "ACT-2026-001", "comment": "Bravo Juliette M. ! Tu viens de nager 0.9 km en 20 min ! Quelle
-énergie !🏅" },
-    { "id": "ACT-2026-002", "comment": "Magnifique Laurence D. ! Une randonnée de 10 km terminée et
-un nouveau spot à découvrir ! 🌄 😍('Randonnée de St Guilhem le
-désert, je vous la conseille c'est top')" }
-  ]
-}
-"""
+        EXEMPLE DE STYLE ATTENDU (220 caractères) :
+        {
+        "results": [
+            { 
+            "id": "ACT-2026-001", 
+            "comment": "**Incroyable performance**, Juliette D. ! Nager 0.9 km en seulement 20 minutes demande une technique de respiration et une force mentale impressionnantes. 
+            C'est en enchaînant ces longueurs que tu construis une **endurance d'acier**. Continue sur cette lancée, tu es une véritable source d'inspiration pour toute l'équipe ! 🏊‍♀️🔥" 
+            }
+        ]
+        }
+        """
         return debut + fin
 
     def _generate_answer(self, prompt: str, temperature: float = 0.7) -> str:
