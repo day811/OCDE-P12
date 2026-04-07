@@ -111,9 +111,9 @@ Règles de génération :
 
 Lien Identifiant : Tu dois impérativement reprendre l' id fourni dans le contexte pour chaque réponse.
 
-Contenu : Adresse-toi à first_name. Utilise la performance. Si situation est rempli, rebondis sur son contenu. Sinon, encourage l'employé sur son sport.
+Contenu : Adresse-toi à Name, et utilise la performance. Si situation est remplie, rebondis sur son contenu. Sinon, encourage l'employé sur son sport.
 
-Format du commentaire : Style amical, motivant, entre 150 et 250 caractères.
+Format du commentaire : Style amical, motivant, entre 200 et 250 caractères.
 
 Format de sortie (Impératif) :
 Tu dois répondre par un objet JSON unique contenant une liste nommée results. Chaque élément de la liste doit avoir exactement deux champs : id et comment.
@@ -121,8 +121,11 @@ Tu dois répondre par un objet JSON unique contenant une liste nommée results. 
 Exemple de structure attendue :
 {
   "results": [
-    { "id": "ACT-2026-001", "comment": "Bravo Laurence ! 10.5 km en 1h05, quelle allure..." },
-    { "id": "ACT-2026-002", "comment": "Superbe effort Marc ! 45 min de Yoga à Lyon..." }
+    { "id": "ACT-2026-001", "comment": "Bravo Juliette M. ! Tu viens de nager 0.9 km en 20 min ! Quelle
+énergie !🏅" },
+    { "id": "ACT-2026-002", "comment": "Magnifique Laurence D. ! Une randonnée de 10 km terminée et
+un nouveau spot à découvrir ! 🌄 😍('Randonnée de St Guilhem le
+désert, je vous la conseille c'est top')" }
   ]
 }
 """
