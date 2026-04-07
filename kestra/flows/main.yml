@@ -43,42 +43,53 @@ tasks:
         "topic.prefix": "cdc"
       }
 
-  - id: wait5_debezium
+  - id: wait15_debezium
     type: io.kestra.plugin.core.flow.Sleep
-    duration: PT5S
+    duration: PT15S
 
-
-  - id: spark_employees
-    type: io.kestra.plugin.core.flow.Subflow
-    namespace: sds.infra
-    flowId: spark_employees_stream
-    wait: false
-
-  - id: wait5_employees
-    type: io.kestra.plugin.core.flow.Sleep
-    duration: PT5S
+  - id: launch_spark_stream
+    type: io.kestra.plugin.core.flow.Parallel
+    description: Launch the 3 spark stream readers
+    tasks: 
+    - id: spark_employees
+      description: Read the CDC stream public employees
+      type: io.kestra.plugin.core.flow.Subflow
+      namespace: sds.infra
+      flowId: spark_employees_stream
+      wait: false
     
-  - id: spark_activities_stats
-    type: io.kestra.plugin.core.flow.Subflow
-    namespace: sds.infra
-    flowId: spark_activities_stats_stream
-    wait: false
+    - id: spark_activities_stats
+      description: Read the CDC activities stream for statistics
+      type: io.kestra.plugin.core.flow.Subflow
+      namespace: sds.infra
+      flowId: spark_activities_stats_stream
+      wait: false
 
-  - id: wait5_act_stats
-    type: io.kestra.plugin.core.flow.Sleep
-    duration: PT5S
-    
-  - id: spark_activities_slack
-    type: io.kestra.plugin.core.flow.Subflow
-    namespace: sds.infra
-    flowId: spark_activities_slack_stream
-    wait: false
+    - id: spark_activities_slack
+      description: Read the CDC activities stream for slack posts
+      type: io.kestra.plugin.core.flow.Subflow
+      namespace: sds.infra
+      flowId: spark_activities_slack_stream
+      wait: false
+
+
+  - id: check_hr
+    type: io.kestra.plugin.jdbc.postgresql.Query
+    url: "jdbc:postgresql://postgres:5432/sport_app_db"
+    username: "{{ secret('POSTGRES_USER') }}"
+    password: "{{ secret('POSTGRES_PASSWORD') }}"
+    sql: SELECT count(*) AS nb_emp FROM employees
+    fetchType: FETCH_ONE
+
 
   - id: ingest_pipeline
     type: io.kestra.plugin.core.flow.Subflow
     namespace: sds.infra
-    disabled: true
+    runIf: "{{ outputs.check_hr.row['nb_emp'] == 0 }}"
     flowId: ingest_hr
     wait: true
+
+
+
   
       

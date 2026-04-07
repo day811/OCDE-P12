@@ -236,11 +236,11 @@ tasks:
 
   - id: send_alert
     type: io.kestra.plugin.core.flow.Subflow
-    flowId: error_handler
+    flowId: notify_error
     namespace: sds.infra
     runIf: "{{ outputs.final_status.value != 'SUCCESS' }} "
     inputs:
-      test: true
+      test: false
       message: "{{outputs.final_log_txt.value}}"
       status: "{{ outputs.final_status.value }}"
 
@@ -253,11 +253,4 @@ tasks:
     type: io.kestra.plugin.core.execution.Fail
     condition: "{{ outputs.final_status.value =='FAILED'}}"
 
-triggers:
-  - id: gsheet_watch
-    type: io.kestra.plugin.googleworkspace.sheets.SheetModifiedTrigger
-    interval: PT5H
-    spreadsheetId: "{{ secret('GSHEET_ID') }}"
-    serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
-    allowConcurrent: false
 

@@ -56,7 +56,7 @@ tasks:
           type: io.kestra.plugin.googleworkspace.sheets.Load
           description: "Export vers Google Sheets via Plugin"
           #format: parquet
-          #from: "{{outputs.generate.outputFiles['activities_fake.xlsx']}}"
+          from: "{{outputs.generate.outputFiles['activities_fake.xlsx']}}"
           spreadsheetId: "{{ secret('GSHEET_ID') }}"
           range: "Feuille1!A1"
           serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
