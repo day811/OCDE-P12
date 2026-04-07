@@ -372,13 +372,17 @@ def generate_comments(df_list:pd.DataFrame ):
         # Simulation : "Sport à Lieu"
         # On gère les cas où situation pourrait être NaN
         # add suffixe as we work wtih full merge file
+        logger.info(f"Execution in bypass RAG mode : {SIMPLE_COMMENTS}")
         response ={}
         if SIMPLE_COMMENTS:
             data = []
             for idx, row in df_batch.iterrows():
+                situation = row['situation']
+                if not situation: situation = "No comment"
                 data.append({ 'id': row['id'] ,'comment' : f"Bypass IA : {row['situation']}"})
             return data
         else:
+            time.sleep(0.5)
             context=df_batch.to_dict(orient='records')
             response = rag.get_comments(context)
             clean_content = response.get('answer').replace('```json', '').replace('```', '')
@@ -386,7 +390,7 @@ def generate_comments(df_list:pd.DataFrame ):
         return data['results']
 
     details=[]
-    batch_qty = 10
+    batch_qty = 100
     rag=None
     if not SIMPLE_COMMENTS:
         rag = Rag()
@@ -403,7 +407,6 @@ def generate_comments(df_list:pd.DataFrame ):
         df_batch = df_list.loc[current_indices]
         
         comments_list = batch_comments(df_batch, rag=rag)
-        time.sleep(0.5)
         comments.extend(comments_list)
         
         logger.info(f"Batch {i//batch_qty + 1} traité ({len(current_indices)} lignes)")
