@@ -4,7 +4,7 @@ from typing import List, Dict, Optional, Callable, Tuple
 from datetime import datetime
 from rag.config import Config
 from rag.mistral_llm import MistralLLM
-#from rag.gemini_llm import GeminiLLM
+from rag.gemini_llm import GeminiLLM
 from rag.config import Config
 
 import logging, sys 
@@ -26,7 +26,7 @@ class LLMFactory:
     
     PROVIDERS = {
         'mistral': MistralLLM,
-#        'gemini': GeminiLLM
+        'gemini': GeminiLLM
     }
     
     @staticmethod
@@ -61,8 +61,14 @@ class RAGEngine:
             embed_function (Callable): Function to generate embeddings for queries and documents.
             top_k (int, optional): Number of top results to retrieve. Defaults to 5.
         """
+
+        self.llms=[]
         # ✅ INITIALIZE LLM FROM CONFIG
-        
+        for provider in Config.ALL_LLM:
+            #llm = get_llm(temperature=Config.LLM_TEMPERATURE, provider=provider )
+            #self.llms.append(llm)
+            pass
+            
         self.search_llm = get_llm(
             temperature=Config.LLM_TEMPERATURE,
             provider=Config.LLM_PROVIDER

@@ -8,14 +8,14 @@ class Config:
     
     
     # Provider: 'mistral', 'openai', 'gemini'
-    LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'mistral')
+    LLM_PROVIDER = os.getenv('LLM_PROVIDER', 'gemini')
     
     # API Keys
     API_KEYS = { 
         LLM_MISTRAL : os.getenv('MISTRAL_API_KEY','') ,
         LLM_GEMINI :  os.getenv('GEMINI_API_KEY','') }
     
-    ALL_LLM = [LLM_MISTRAL, LLM_GEMINI, LLM_OPENAI]
+    ALL_LLM = [LLM_MISTRAL, LLM_GEMINI]
     
     # Default models fallback (if not specified in .env)
     LLM_MODELS = {
@@ -23,7 +23,7 @@ class Config:
             'chat': os.getenv('MISTRAL_CHAT_MODEL', 'mistral-small'),
         },
         'gemini': {
-            'chat': os.getenv('GEMINI_CHAT_MODEL', 'gemini-2.5-flash'),
+            'chat': os.getenv('GEMINI_CHAT_MODEL', 'gemini-1.5-flash'),
         }
     }
     

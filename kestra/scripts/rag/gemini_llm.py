@@ -24,13 +24,6 @@ class GeminiLLM(BaseLLM):
             Initialize the GeminiLLM client with the specified temperature parameter.
         generate(prompt: str, temperature: float = 0.7) -> str:
             Generate text content based on a given prompt using the Gemini chat model.
-        embed(text: str | list) -> list | list[list]:
-            Generate embeddings for one or multiple texts using the Gemini embed model.
-            Returns a single embedding vector for a string input or a list of embedding
-            vectors for a list input.
-        get_langchain(temperature: float = 0.7):
-            Factory class method that returns a LangChain-compatible ChatGoogleGenerativeAI
-            instance configured with the Gemini model and API key.
     """
 
 
@@ -67,5 +60,5 @@ class GeminiLLM(BaseLLM):
                 "max_output_tokens": 512,
             },
             )
-        return response.text
+        return response.text if response.text else ""
     
