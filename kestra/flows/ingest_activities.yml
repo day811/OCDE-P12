@@ -226,7 +226,7 @@ tasks:
       💪💪💪💪  ACTION CHANGES TO DB  : {{ outputs.load_pg_status.value }} 💪💪💪💪   
       ════════════════════════════════════════════════════════════&nbsp;  
       💪 Comment new and changed Activities : {{ outputs.comment_activities.vars.result }} : {{ outputs.comment_activities.vars.shape }} rows    
-      {% if tasks.load_sheet.state != 'FAILED' %}  
+      {% if tasks.load_sheet.state != 'FAILED' and outputs.comment_activities_status.value != 'FAILED' %}  
       &nbsp;
       💪 Activities to db : {{ outputs.load_pg.vars.result }} : {{ outputs.load_pg.vars.shape }}
       &nbsp;  
