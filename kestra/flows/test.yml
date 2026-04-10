@@ -2,13 +2,24 @@ id: test
 namespace: sds.infra
 
 tasks:
-  - id: submit_to_spark
-    type: io.kestra.plugin.scripts.shell.Commands
-    taskRunner: 
-      type: io.kestra.plugin.core.runner.Process
-    commands:
-      # On installe le client docker si l'image ne l'a pas
-      - docker ps  > "dockerps.txt" # Si cette commande répond, on a gagné.
-    outputFiles:
-      - "dockerps.txt"
 
+  - id: load_sheet
+    type: io.kestra.plugin.googleworkspace.sheets.Read
+    description: "Laod Google Sheet in ION"
+    dateTimeRender: FORMATTED_STRING
+    spreadsheetId: "{{ secret('GSHEET_ID') }}"
+    store: true
+    serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
+    allowFailure: true
+    retry:
+      type: constant
+      maxAttempt: 3
+      maxDuration: PT30S
+      interval: PT15S
+
+  - id: convert_to_xlsx
+    type: io.kestra.plugin.serdes.excel.IonToExcel
+    description: "Convert ION downloaded to xlsc"
+    from: "{{ outputs.load_sheet['uris']['Activities'] }}"
+    runIf: "{{ tasks.load_sheet.state == 'SUCCESS'}}" 
+    allowFailure: true
