@@ -21,4 +21,4 @@ geopy           # Géocodage (Nominatim) et calcul de distances géodésiques
 
 #Comment build
 mistralai
-genai
+google-genai
