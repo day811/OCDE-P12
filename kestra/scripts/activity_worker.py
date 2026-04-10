@@ -338,11 +338,11 @@ def scan_new_activities(fingerprinted_activities,actions_file:str):
         for col in cols_to_fix:
             df_diff.loc[mask_right, col] = df_diff.loc[mask_right, f"{col}_y"]
 
-        # 4. On supprime proprement les colonnes techniques
+        # 4. remove former *_y columns
         df_diff.drop(columns=[f"{c}_y" for c in cols_to_fix], inplace=True)
 
         is_duplicated = df_diff.duplicated(subset=['id'], keep=False)
-        df_diff['status'] = 'new' # Par défaut
+        df_diff['status'] = 'new' 
         df_diff.loc[is_duplicated, 'status'] = 'modified'
         df_diff.loc[(df_diff['_merge'] == 'right_only') & (~is_duplicated), 'status'] = 'deleted'
 
@@ -425,7 +425,7 @@ def generate_comments(df_list:pd.DataFrame ):
         return data['results']
 
     details=[]
-    batch_qty = 100
+    batch_qty = 50
     rag=None
     if not SIMPLE_COMMENTS:
         rag = Rag()
@@ -616,7 +616,7 @@ def load_pg(processed_file: str) -> None:
 
 if __name__ == "__main__":
     import sys
-    SIMPLE_COMMENTS = True
+    #SIMPLE_COMMENTS = True
     action = sys.argv[1]
     # CLI parameters
     BASE_DIR = Path(__file__).parent.parent.parent
