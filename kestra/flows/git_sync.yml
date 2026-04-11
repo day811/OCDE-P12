@@ -1,0 +1,9 @@
+id: git_sync
+namespace: sds.infra
+tasks:
+  - id: sync-flows
+    type: io.kestra.plugin.git.SyncFlows
+    url: https://github.com/day811/OCDE-P12
+    branch: main
+    targetNamespace: sds.infra  # target
+    gitDirectory: kestra/flows

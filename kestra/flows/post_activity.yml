@@ -11,8 +11,7 @@ inputs:
 tasks:
   - id: check_test
     type: io.kestra.plugin.core.flow.Switch
-    value : "{{ trigger.body.log_notif }}"
-    #value: "NO"
+    value : "{{ trigger.body.notif_target }}"
     cases :
       NO:
         - id: notify_slack
