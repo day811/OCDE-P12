@@ -160,7 +160,7 @@ def run_generation(
         shape = df_result.shape
         df_result.sort_values('id', inplace=True)
         df_result.to_excel(output_excel, index=False)
-        logger.info( f"End of fake generation : {ct.STATUS_TXT[status]}")
+        logger.info( f"End of fake generation : {output_excel}")
         # Integration with Kestra context
 #        ct.kestra_output('activities_path',  output_excel)
     except Exception as e:
@@ -420,16 +420,18 @@ def generate_comments(df_list:pd.DataFrame ):
             time.sleep(0.5)
             context=df_batch.to_dict(orient='records')
             response = rag.get_comments(context)
-            clean_content = response.get('answer').replace('```json', '').replace('```', '')
+
+           # Parsing with strict=False to handle \\n
+            clean_content = response.get('answer').replace('```json', '').replace('```', '').strip()
             data = json.loads(clean_content)
         return data['results']
 
     details=[]
-    batch_qty = 50
+    batch_qty = 100
     rag=None
     if not SIMPLE_COMMENTS:
         rag = Rag()
-    # On identifie les indices des lignes à traiter
+    # make list of index to associate with
     indices_todo = df_list.index
     nb_to_generate = len(indices_todo)
     logger.info(f"Début de la génération de {nb_to_generate} commentaires par batchs de {batch_qty}")
@@ -438,7 +440,7 @@ def generate_comments(df_list:pd.DataFrame ):
     for i in range(0, nb_to_generate, batch_qty):
         current_indices = indices_todo[i : i + batch_qty]
         
-        # Extraction du sous-dataframe
+        # Extraction of sub dataframe
         df_batch = df_list.loc[current_indices]
         
         comments_list = batch_comments(df_batch, rag=rag)
@@ -622,7 +624,7 @@ if __name__ == "__main__":
     BASE_DIR = Path(__file__).parent.parent.parent
     ct.KESTRA_MODE = False
     if action == "rung_gen":
-        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/sources/strava_sports.xlsx", f"{BASE_DIR}/data/sources/locations.xlsx", 3000)
+        run_generation(f"{BASE_DIR}/data/sources/Données+Sportive.xlsx", f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/sources/strava_sports.xlsx", f"{BASE_DIR}/data/sources/locations.xlsx", 300)
     elif action == "validate":
         validate_incoming(f"{BASE_DIR}/data/tmp/activities_fake.xlsx", f"{BASE_DIR}/data/tmp/activities_income.parquet")
     elif action == "fingerprint":
