@@ -33,7 +33,7 @@ class LLMFactory:
     def create_llm(temperature: float = 0.7, provider:str=""):
         """Create LLM instance based on provider"""
         if not provider:
-            provider = Config.LLM_PROVIDER
+            provider = Config.ALL_LLM[0]
         
         if provider not in LLMFactory.PROVIDERS:
             raise ValueError(f"Unknown provider: {provider}. Available: {list(LLMFactory.PROVIDERS.keys())}")
@@ -41,7 +41,7 @@ class LLMFactory:
         return LLMFactory.PROVIDERS[provider](temperature=temperature )
 
 
-def get_llm(temperature: float = 0.7, provider:str=Config.LLM_PROVIDER):
+def get_llm(temperature: float = 0.7, provider:str=Config.ALL_LLM[0]):
     """Convenience function to get LLM instance"""
 
     return LLMFactory.create_llm( temperature, provider)
@@ -62,19 +62,14 @@ class RAGEngine:
             top_k (int, optional): Number of top results to retrieve. Defaults to 5.
         """
 
-        self.llms=[]
+        self.llms={}
         # ✅ INITIALIZE LLM FROM CONFIG
         for provider in Config.ALL_LLM:
-            #llm = get_llm(temperature=Config.LLM_TEMPERATURE, provider=provider )
-            #self.llms.append(llm)
-            pass
+            if Config.get_api_key(provider):
+                llm = get_llm(temperature=Config.LLM_TEMPERATURE, provider=provider )
+                self.llms[provider] = llm
             
-        self.search_llm = get_llm(
-            temperature=Config.LLM_TEMPERATURE,
-            provider=Config.LLM_PROVIDER
-        )
-   
-
+ 
     def get_comments(self,  context:List[Dict], temperature: float = 0.7
     ) -> Dict:
 
@@ -138,9 +133,11 @@ class RAGEngine:
 
     def _generate_answer(self, prompt: str, temperature: float = 0.7) -> str:
         """Generate answer using LLM"""
-        try:
-            return self.search_llm.generate(prompt, temperature=temperature)
+        
+        for provider, llm in self.llms.items():
+            try:
+                return llm.generate(prompt, temperature=temperature)
 
-        except Exception as e:
-            logger.error(f"LLM generation error: {e}")
-            return "Désolé, je n'ai pas pu générer une réponse."
+            except Exception as e:
+                logger.error(f"LLM generation error with {provider}: {e}")
+        return "Unable to get an answer."
