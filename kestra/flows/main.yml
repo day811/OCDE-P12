@@ -103,12 +103,6 @@ errors:
       test: true
       message: "Main startup flow failed"
 
-finally:
-  - id: set_inactive_status
-    type: io.kestra.plugin.core.kv.Set
-    key: "spark_status"
-    value: "inactive"
-
 triggers:
   - id: auto_start
     type: io.kestra.plugin.core.trigger.Schedule

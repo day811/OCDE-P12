@@ -13,7 +13,7 @@ tasks:
     type: io.kestra.plugin.core.flow.Switch
     value : "{{ trigger.body.notif_target }}"
     cases :
-      NO:
+      SLACK:
         - id: notify_slack
           type: io.kestra.plugin.slack.notifications.SlackIncomingWebhook
           url: "{{ secret('SLACK_WEBHOOK_URL') }}"
@@ -24,7 +24,7 @@ tasks:
             maxDuration: PT30S
             interval: PT5S
             
-      YES:
+      LOG:
         - id: only_log
           type: io.kestra.plugin.core.log.Log
           message: |

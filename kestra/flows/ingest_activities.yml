@@ -6,7 +6,7 @@ inputs:
   - id: simple_comments
     type: BOOL
     defaults: true
-    description: DO NOT use RAG to generate comment
+    description: If checked, DOES NOT use RAG to generate comment
 
 
 variables:
