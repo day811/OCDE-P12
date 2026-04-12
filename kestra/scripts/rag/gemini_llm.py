@@ -37,7 +37,7 @@ class GeminiLLM(BaseLLM):
 
         super().__init__(temperature)
 
-        self.client = genai.Client(api_key=self.API_KEY)# type: ignore
+        self.client = genai.Client(api_key=self.API_KEY, http_options={'api_version': 'v1'})# type: ignore
         logger.info(f"GeminiLLM initialized - Chat: {self.CHAT_MODEL}, Temp: {self.temperature}")
     
     def generate(self, prompt: str, temperature: float = 0.7) -> str:
@@ -55,10 +55,6 @@ class GeminiLLM(BaseLLM):
         response = self.client.models.generate_content(
             model= self.CHAT_MODEL,
             contents= prompt,
-            config={
-                "temperature": self.temperature,
-                "max_output_tokens": 512,
-            },
-            )
+           )
         return response.text if response.text else ""
     
