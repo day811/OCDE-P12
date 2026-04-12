@@ -50,7 +50,7 @@ df_with_date = df_processed.withColumn("activity_date", from_unixtime(col("begin
 # Exemple: si FIRST_MONTH = 9, une activité en Octobre 2023 -> "2023-2024"
 # Une activité en Janvier 2024 -> "2023-2024"
 df_social = df_with_date.withColumn("start_year", 
-    when(month(col("activity_date")) >= FIRST_MONTH, year(col("activity_date")))
+    when(month(col("activity_date")) > FIRST_MONTH, year(col("activity_date")))
     .otherwise(year(col("activity_date")) - 1)
 ).withColumn("social_year", concat(col("start_year"), lit("-"), col("start_year") + 1)).withColumn("_event_timestamp", current_timestamp())
 
