@@ -13,14 +13,14 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-LOG_NOTIF = os.getenv('LOG_NOTIF',"NO") # NO : To Slack, YES: To logs, NOTHING: No action
-print(f"Send message to log instead of Slack : {LOG_NOTIF}")
+NOTIF_TARGET = os.getenv('NOTIF_TARGET',"NONE") # LOG/SLACK/NONE
+print(f"Send message to : {NOTIF_TARGET}")
 webhook_id = os.getenv('WEBHOOK_ID','')
 if not webhook_id:
     print(f"Missing web hook id")
     exit(1)
 KESTRA_API_URL = "http://kestra:8080/api/v1/executions/webhook/sds.infra/post_activity/" + webhook_id
-#print(f"Kestra webhook url : {KESTRA_API_URL}")
+
 
 # Get CRYPT KEY TO ENCRYPT COMMENTS
 CRYPT_KEY = os.getenv("CRYPT_KEY")
@@ -62,15 +62,15 @@ def send_to_kestra(batch_df, batch_id):
     # make a list(Dict) from it
     records = batch_df.collect()
     print(f"Batch {batch_id} reçu avec {batch_df.count()} lignes")
-    if LOG_NOTIF != 'NOTHING':
+    if NOTIF_TARGET != 'NONE':
         for row in records:
             decrypt_comment = decrypt_val(row.comment)
             clean_comment = decrypt_comment.replace('"', "'").strip()
             if clean_comment:
-                print(f"Traitement ID {row.id}, Comment length: {len(row.comment) if row.comment else 0}")
+                print(f"Process ID {row.id}, Comment length: {len(row.comment) if row.comment else 0}")
                 payload = {
                     "comment": clean_comment,
-                    "log_notif" : LOG_NOTIF
+                    "notif_target" : NOTIF_TARGET
                 }
                 try:
                     # Triggers the flowin kestra
