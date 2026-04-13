@@ -5,8 +5,8 @@ description: Ingestion pipeline of Google Sheet Data in postgreSQL DB
 inputs:
   - id: simple_comments
     type: BOOL
-    defaults: false
-    description: DO NOT use RAG to generate comment
+    defaults: true
+    description: If checked, DOES NOT use RAG to generate comment
 
 
 variables:
@@ -252,5 +252,16 @@ tasks:
   - id: set_final_status
     type: io.kestra.plugin.core.execution.Fail
     condition: "{{ outputs.final_status.value =='FAILED'}}"
+
+triggers:
+  - id: gsheet_watch
+    type: io.kestra.plugin.googleworkspace.sheets.SheetModifiedTrigger
+    interval: PT15H
+    spreadsheetId: "{{ secret('GSHEET_ID') }}"
+    serviceAccount: "{{ secret('GCP_SERVICE_ACCOUNT_JSON') }}"
+    allowConcurrent: false
+    conditions:
+      - type: io.kestra.plugin.core.condition.Expression
+        expression: "{{ kv('spark_status') == 'active' }}"
 
 

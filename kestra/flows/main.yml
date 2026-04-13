@@ -89,7 +89,25 @@ tasks:
     flowId: ingest_hr
     wait: true
 
+  - id: set_active_status
+    type: io.kestra.plugin.core.kv.Set
+    key: "spark_status"
+    value: "active"
+
+errors:
+  - id: send_alert
+    type: io.kestra.plugin.core.flow.Subflow
+    flowId: notify_error
+    namespace: sds.infra
+    inputs:
+      test: true
+      message: "Main startup flow failed"
+
+triggers:
+  - id: auto_start
+    type: io.kestra.plugin.core.trigger.Schedule
+    cron: "*/5 * * * *"
+    stopAfter:
+      - SUCCESS
 
 
-  
-      
