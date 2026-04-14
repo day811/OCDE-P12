@@ -1,6 +1,6 @@
 ```mermaid
 sequenceDiagram
-    participant CSV as 📁 Fichiers XLSX (RH/Sport)
+    participant XLSX as 📁 Fichiers XLSX (RH/Sport)
     participant Kestra as ⚙️ Kestra (Orchestrateur)
     participant PG as 🐘 PostgreSQL (Source)
     participant GE as 🛡️ Great Expectations (Qualité)
@@ -10,7 +10,7 @@ sequenceDiagram
     participant Delta as 🏠 Delta Lake (Stockage Gold)
 
     Note over Kestra, PG: PHASE 1 : INGESTION & QUALITÉ
-    Kestra->>CSV: Lit les nouveaux fichiers
+    Kestra->>XLSX: Lit les nouveaux fichiers
     Kestra->>PG: INSERT / UPSERT des données
     Kestra->>GE: Lance la validation sur PG
     GE-->>Kestra: Rapport (OK / Erreur)
@@ -25,6 +25,6 @@ sequenceDiagram
     Spark->>Delta: Écrit les résultats consolidés
     
     Note over Delta, Kestra: PHASE 4 : MONITORING
-    Delta-->>Kestra: (Optionnel) Validation finale
+    Delta-->>Kestra: Validation finale
     Kestra->>Delta: Requête pour reporting / Slack
 ```
