@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 # --- CONFIGURATION & PARAMÈTRES ---
 # Récupération de la clé depuis l'environnement (injectée via Docker)
 CRYPT_KEY = os.getenv("CRYPT_KEY")
-BONUS_PERCENTAGE = 0.05
+BONUS_PERCENTAGE= float(os.getenv("BONUS_PERCENTAGE","0.05"))
 FISCAL_YEAR_START_MONTH = os.getenv("FIRST_MONTH")  # L'année de référence change en Septembre
 ACTIVE_MODES = ["Vélo/Trottinette/Autres", "Marche/running"]
 
