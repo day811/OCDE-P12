@@ -5,7 +5,7 @@ description: Ingestion pipeline of Google Sheet Data in postgreSQL DB
 inputs:
   - id: simple_comments
     type: BOOL
-    defaults: true
+    defaults: false
     description: If checked, DOES NOT use RAG to generate comment
 
 
@@ -104,64 +104,67 @@ tasks:
     type: io.kestra.plugin.core.debug.Return
     format: "{{ tasks.scan_new_activities.state == 'SKIPPED' ? 'FAILED' : (outputs.scan_new_activities.vars.status == 'WARNING' or outputs.validate_incoming.vars.status == 'WARNING') ? 'WARNING' : 'SUCCESS' }}"
 
-  - id: must_continue
-    type: io.kestra.plugin.core.flow.Switch
-    description: "Check if scanner found actions to make"
-    value: "{{ outputs.scan_new_activities.vars.continue }}"
-    runIf: "{{ outputs.scan_new_activities_status.value != 'FAILED'}}"
-    cases:
-      YES:
-      - id: process_actions
-        type: io.kestra.plugin.core.flow.Sequential
-        description: "Generate comments for new and modified activities"
-        tasks:
-        - id: comment_activities
-          type: io.kestra.plugin.scripts.python.Commands
-          description: "Incoming activities commenting"
-          allowFailure: true
-          env:
-            SIMPLE_COMMENTS: "{{ inputs.simple_comments }}" # Do NOT generate comments with RAG
-            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
-            DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from activity_worker import comment_activities; comment_activities("{{outputs.scan_new_activities.outputFiles['activities_actions.parquet'] }}", "activities_commented.parquet", "{{ vars.xl_sports_file }}")'
-          outputFiles:
-            - "activities_commented.parquet"
+  - id: if_scan
+    type: io.kestra.plugin.core.flow.If
+    condition: "{{ outputs.scan_new_activities_status.value != 'FAILED'}}"
+    then:
+    - id: must_continue
+      type: io.kestra.plugin.core.flow.Switch
+      description: "Check if scanner found actions to make"
+      value: "{{ outputs.scan_new_activities.vars.continue }}"
+      cases:
+        YES:
+        - id: process_actions
+          type: io.kestra.plugin.core.flow.Sequential
+          description: "Generate comments for new and modified activities"
+          tasks:
+          - id: comment_activities
+            type: io.kestra.plugin.scripts.python.Commands
+            description: "Incoming activities commenting"
+            allowFailure: true
+            env:
+              SIMPLE_COMMENTS: "{{ inputs.simple_comments }}" # Do NOT generate comments with RAG
+              CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+              DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
+            taskRunner:
+              type: io.kestra.plugin.core.runner.Process
+            commands:
+              - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+              - python -c 'from activity_worker import comment_activities; comment_activities("{{outputs.scan_new_activities.outputFiles['activities_actions.parquet'] }}", "activities_commented.parquet", "{{ vars.xl_sports_file }}")'
+            outputFiles:
+              - "activities_commented.parquet"
 
-        - id: comment_activities_status
-          type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.comment_activities.state != 'SKIPPED' ? outputs.comment_activities.vars.status : 'FAILED'  }}"
+          - id: comment_activities_status
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ tasks.comment_activities.state != 'SKIPPED' ? outputs.comment_activities.vars.status : 'FAILED'  }}"
 
-        - id: load_pg
-          type: io.kestra.plugin.scripts.python.Commands
-          description: "Make update to PostgreSQL DB"
-          allowFailure: true
-          runIf: "{{ outputs.comment_activities_status.value == 'SUCCESS'}}"
-          taskRunner:
-            type: io.kestra.plugin.core.runner.Process
-          env:
-            MISTRAL_API_KEY: "{{ secret('MISTRAL_API_KEY') }}"
-            CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
-            DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
-          commands:
-            - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
-            - python -c 'from activity_worker import load_pg; load_pg("{{outputs.comment_activities.outputFiles['activities_commented.parquet'] }}")'
-        - id: load_pg_status
-          type: io.kestra.plugin.core.debug.Return
-          format: "{{ tasks.load_pg.state != 'SKIPPED' ? outputs.load_pg.vars.status : 'FAILED'  }}"
+          - id: load_pg
+            type: io.kestra.plugin.scripts.python.Commands
+            description: "Make update to PostgreSQL DB"
+            allowFailure: true
+            runIf: "{{ outputs.comment_activities_status.value == 'SUCCESS'}}"
+            taskRunner:
+              type: io.kestra.plugin.core.runner.Process
+            env:
+              MISTRAL_API_KEY: "{{ secret('MISTRAL_API_KEY') }}"
+              CRYPT_KEY: "{{ secret('CRYPT_KEY') }}"
+              DB_CONNECTION_STRING: postgresql://{{ secret('POSTGRES_USER') }}:{{ secret('POSTGRES_PASSWORD') }}@postgres:5432/sport_app_db
+            commands:
+              - export PYTHONPATH=$PYTHONPATH:{{vars.script_path}}
+              - python -c 'from activity_worker import load_pg; load_pg("{{outputs.comment_activities.outputFiles['activities_commented.parquet'] }}")'
+          - id: load_pg_status
+            type: io.kestra.plugin.core.debug.Return
+            format: "{{ tasks.load_pg.state != 'SKIPPED' ? outputs.load_pg.vars.status : 'FAILED'  }}"
 
-        - id: log_final_log
+          - id: log_final_log
+            type: io.kestra.plugin.core.log.Log
+            message: |
+              Google Sheet Download : 
+
+        NO:
+        - id: log_nothing
           type: io.kestra.plugin.core.log.Log
-          message: |
-            Google Sheet Download : 
-
-      NO:
-      - id: log_nothing
-        type: io.kestra.plugin.core.log.Log
-        message: "Rien à faire, arrêt propre du flow."
+          message: "Rien à faire, arrêt propre du flow."
 
   - id: duration_calc 
     type: io.kestra.plugin.scripts.python.Script

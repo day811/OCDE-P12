@@ -21,6 +21,8 @@ tasks:
         --conf spark.driver.memory=512m \
         --conf spark.executor.cores=1 \
         --conf spark.cores.max=1 \
+        --conf spark.ui.prometheus.enabled=true \
+        --conf spark.executor.processTreeMetrics.enabled=true \
         --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,io.delta:delta-spark_2.12:3.1.0 \
         --conf spark.sql.streaming.checkpointLocation=/opt/spark/checkpoints/activities_slack_gold \
         /opt/spark/scripts/process_activities_slack.py
