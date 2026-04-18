@@ -11,7 +11,7 @@ scrape_configs:
 
   # 2. Job Kestra
   - job_name: 'kestra'
-    metrics_path: '/metrics'
+    metrics_path: '/prometheus'
     fallback_scrape_protocol: 'PrometheusText1.0.0'
     static_configs:
       - targets: ['kestra:8081']

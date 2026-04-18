@@ -75,6 +75,15 @@ services:
               base-path: /app/storage
           jooq:
             enabled: true
+        management:
+          server:
+            port: 8081
+          endpoints:
+            all:
+              enabled: true
+            web:
+              exposure:
+                include: "*"
     command: server standalone
     volumes:
       - kestra_storage:/app/storage
@@ -83,6 +92,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "8080:8080"
+      - "8081:8081"
     networks:
       - sport-pipeline
 
@@ -148,12 +158,12 @@ services:
       - SPARK_MODE=master
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_CONF_SPARK_UI_PROMETHEUS_ENABLED=true
-#      - SPARK_METRICS_CONF=/opt/bitnami/spark/conf/metrics.properties
+      - SPARK_METRICS_CONF=/opt/bitnami/spark/conf/metrics.properties
     volumes:
       - ./data/delta-lake:/opt/spark/data  # Delta Lake storage
       - spark-logs:/opt/spark/logs
       - ./kestra/scripts:/opt/spark/scripts     
-#      - ./spark/spark-metrics.properties:/opt/bitnami/spark/conf/metrics.properties
+      - ./spark/spark-metrics.properties:/opt/bitnami/spark/conf/metrics.properties
       - ./spark/checkpoints:/opt/spark/checkpoints
     ports:
       - "8082:8080"  # Spark UI
@@ -180,7 +190,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
       - SPARK_CONF_SPARK_UI_PROMETHEUS_ENABLED=true
-#      - SPARK_METRICS_CONF=/opt/bitnami/spark/conf/metrics.properties
+      - SPARK_METRICS_CONF=/opt/bitnami/spark/conf/metrics.properties
     depends_on:
       spark-master:
         condition: service_started  
@@ -188,7 +198,7 @@ services:
       - ./data/delta-lake:/opt/spark/data
       - ./kestra/scripts:/opt/spark/scripts     
       - ./spark/checkpoints:/opt/spark/checkpoints
-#      - ./spark/spark-metrics.properties:/opt/bitnami/spark/conf/metrics.properties
+      - ./spark/spark-metrics.properties:/opt/bitnami/spark/conf/metrics.properties
       - spark-logs:/opt/spark/logs    
     healthcheck:
           test: ["CMD", "curl", "-f", "http://localhost:8081"]
