@@ -12,23 +12,17 @@ scrape_configs:
   # 2. Job Kestra
   - job_name: 'kestra'
     metrics_path: '/metrics'
+    fallback_scrape_protocol: 'PrometheusText1.0.0'
     static_configs:
       - targets: ['kestra:8081']
 
   # 3. Job Spark (Générique)
-  - job_name: 'spark'
-    metrics_path: '/metrics/prometheus'
-    static_configs:
-      - targets: ['spark-master:8080', 'spark-worker:8081']
-
-  # 4. Job Spark-Master (Spécifique)
   - job_name: 'spark-master'
-    metrics_path: '/metrics/prometheus'
+    metrics_path: '/metrics/json'  # ← Chemin MASTER spécifique
     static_configs:
       - targets: ['spark-master:8080']
 
-  # 5. Job Spark-Worker (Spécifique)
-  - job_name: 'spark-worker'
-    metrics_path: '/metrics/prometheus'
+  - job_name: 'spark-executors'
+    metrics_path: '/metrics/executors/json'
     static_configs:
-      - targets: ['spark-worker:8081']
+      - targets: ['spark-master:8080']
