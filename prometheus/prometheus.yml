@@ -18,11 +18,11 @@ scrape_configs:
 
   # 3. Job Spark (Générique)
   - job_name: 'spark-master'
-    metrics_path: '/metrics/json'  # ← Chemin MASTER spécifique
+    metrics_path: '/metrics/prometheus'  # ← Chemin MASTER spécifique
     static_configs:
       - targets: ['spark-master:8080']
 
   - job_name: 'spark-executors'
-    metrics_path: '/metrics/executors/json'
+    metrics_path: '/metrics/executors/prometheus'
     static_configs:
       - targets: ['spark-master:8080']
